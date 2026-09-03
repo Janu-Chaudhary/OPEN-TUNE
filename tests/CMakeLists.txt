@@ -7,6 +7,7 @@ add_executable(opentune_tests
     test_scale_quantizer.cpp
     test_pitch_corrector_interface.cpp
     test_params.cpp
+    test_autocorrelation_detector.cpp
 )
 target_include_directories(opentune_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/doctest
