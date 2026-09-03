@@ -58,7 +58,15 @@ opentune::PitchEstimate runToSettledEstimate(opentune::AutocorrelationDetector& 
 } // namespace
 
 TEST_CASE("AutocorrelationDetector detects 110/220/440/880 Hz sines within +/-20 cents") {
-    const float testFrequencies[] = {110.0f, 220.0f, 440.0f, 880.0f};
+    // 70 Hz and 1090 Hz are regression cases for a lag-range-boundary bug
+    // (review findings round 1, Important 2): prepare() used to round lag
+    // bounds to the nearest sample rather than widening them, and the
+    // first-peak search excluded the array endpoints outright, so
+    // 1090.9 Hz (period exactly at the old rounded minLag of 44 samples at
+    // 48 kHz) fell just outside the searchable/selectable range and was
+    // detected an octave low (~545 Hz) instead. 70 Hz exercises the
+    // equivalent boundary near kMinFrequencyHz / maxLag.
+    const float testFrequencies[] = {70.0f, 110.0f, 220.0f, 440.0f, 880.0f, 1090.0f};
 
     for (float hz : testFrequencies) {
         CAPTURE(hz);
@@ -94,6 +102,25 @@ TEST_CASE("AutocorrelationDetector reports voiced=false for silence") {
     CHECK(estimate.frequencyHz == 0.0f);
 }
 
+TEST_CASE("AutocorrelationDetector reports voiced=false for white noise") {
+    // Review findings round 1, Important 3: the silence test returns early
+    // at the RMS gate and never exercises the correlation-based voicing
+    // rejection or the global-max fallback path. Full-scale white noise
+    // passes the RMS gate (it has real energy) but has no lag anywhere
+    // near a perfect self-match, so it must be rejected by the normalised
+    // correlation threshold instead.
+    opentune::AutocorrelationDetector detector;
+    detector.prepare(kSampleRate, kMaxBlockSize);
+
+    const std::vector<float> signal =
+        opentune::test::whiteNoise(kSettleSignalSamples, /*seed=*/12345u);
+
+    const opentune::PitchEstimate estimate = runToSettledEstimate(detector, signal, kMaxBlockSize);
+
+    CHECK(estimate.voiced == false);
+    CHECK(estimate.frequencyHz == 0.0f);
+}
+
 TEST_CASE("AutocorrelationDetector reports voiced=false until its analysis window fills") {
     opentune::AutocorrelationDetector detector;
     detector.prepare(kSampleRate, kMaxBlockSize);
@@ -119,8 +146,16 @@ TEST_CASE("AutocorrelationDetector: same signal via different block sizes settle
     // m_buffer.size() samples (not on how they arrived), feeding the same
     // signal through 64-sample and 256-sample blocks must settle to the
     // same estimate.
+    //
+    // Review findings round 1, Minor 7: kSettleSignalSamples (9600) divides
+    // evenly by both 64 and 256, so both runs would end on a byte-identical
+    // final window regardless of whether this invariance genuinely held --
+    // a length one sample longer forces the final blocks of each run to
+    // land at different offsets into the ring buffer's shift-and-append
+    // sequence, so the assertion actually exercises alignment-independence
+    // rather than being structurally guaranteed by the chosen length.
     const std::vector<float> signal =
-        opentune::test::sine(440.0f, kSampleRate, kSettleSignalSamples);
+        opentune::test::sine(440.0f, kSampleRate, kSettleSignalSamples + 1);
 
     opentune::AutocorrelationDetector detectorSmallBlocks;
     detectorSmallBlocks.prepare(kSampleRate, kMaxBlockSize);

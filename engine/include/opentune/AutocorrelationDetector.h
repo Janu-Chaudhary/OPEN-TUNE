@@ -28,16 +28,49 @@ namespace opentune {
 //      detector's accuracy bar is +/-20 cents (specs.md AC1 wants +/-5 --
 //      YIN's job) and why no interpolation is added here: it is scope
 //      creep for this task.
-//   2. Octave bias. Plain autocorrelation sums get *larger*, on average,
-//      at *longer* lags simply because low-frequency signal content (and
-//      any DC/near-DC energy) correlates with itself over a wider range of
-//      shifts than a genuinely periodic tone does. That can make a longer
-//      lag -- half the true pitch, i.e. an octave too low -- win the
-//      search even when the true-period lag is the "right" answer. YIN's
-//      cumulative mean normalised difference function (T1.4) is
-//      specifically designed to cancel this bias. This detector does not
-//      attempt to fix it; it is a known, documented limitation of the
-//      naive method, not a bug in this implementation.
+//   2. Octave bias -- and, specifically, which *direction* it errs in.
+//      This implementation (see process() in the .cpp) does NOT pick the
+//      single largest correlation sum in the search range. It walks lags
+//      from short to long and returns the *first* interior local peak
+//      whose normalised strength clears `kMinNormalizedCorrelation`. That
+//      choice is deliberate: for a genuinely periodic signal, correlation
+//      peaks repeat at every integer multiple of the true period, often at
+//      near-identical strength (this detector's comparison window does not
+//      shrink with lag -- see prepare() -- so those repeat peaks do not
+//      fade out with distance the way they would against a naturally
+//      decaying tone). Picking the global maximum among those near-tied
+//      peaks is close to a coin flip; picking the *first* one resolves the
+//      tie toward the shortest, correct period.
+//
+//      The cost of that choice: on a voice whose fundamental is weak or
+//      missing relative to its first harmonic (common on telephone-band
+//      audio, belted high notes, and many spoken male vowels where H2
+//      outweighs H1), the first *harmonic* -- one octave above the true
+//      pitch -- can itself form a strong, qualifying peak before the
+//      (weaker) fundamental's peak is reached. In that case this detector
+//      reports an octave too HIGH, not too low. This is the opposite
+//      direction from naive global-max autocorrelation's textbook bias
+//      (which favours long lags and tends to report an octave too low);
+//      first-peak selection trades one failure mode for the other rather
+//      than eliminating it.
+//
+//      `kMinNormalizedCorrelation` (0.6) is doing double duty here: it
+//      both decides which peaks are strong enough to *qualify* as
+//      candidates during the walk, and is the final voiced/unvoiced gate
+//      applied to whichever lag is ultimately chosen. A harmonic peak on a
+//      real, reasonably clean voice typically clears 0.6 comfortably (a
+//      harmonic is still a genuine periodicity of the signal, just not the
+//      fundamental one) -- which is precisely the mechanism behind the
+//      octave-too-high error above: the harmonic peak is not weak, it is
+//      just early.
+//
+//      YIN's cumulative mean normalised difference function (T1.4) is
+//      designed to make this decision correctly (favour the fundamental
+//      over its harmonics) rather than by lag-order alone; T1.7 (voicing)
+//      is where a principled, not-double-duty voicing decision lands. This
+//      detector does not attempt either; the octave-too-high bias
+//      described here is a known, documented limitation of this specific
+//      (first-peak) naive method, not a bug in this implementation.
 //
 // See PitchDetector.h for the interface contract and the general
 // buffering rationale (why a detector needs a longer analysis window than
@@ -61,14 +94,25 @@ public:
     // the buffer has filled, returns `{0.0f, 0.0f, false}` rather than
     // analysing a partial (and mostly-zero-initialised) window. Real-time
     // safe: never allocates, throws, locks, logs, or blocks (noexcept).
+    //
+    // "Real-time safe" here means only the constitution II sense (no
+    // allocation/throw/lock/log/block) -- it is NOT a claim that this call
+    // fits inside a real-time audio callback's deadline. The correlation
+    // search below is a full O(lags * window) scan, on the order of ~1.0
+    // million multiply-adds per call at 48 kHz nominal sizing (see the
+    // .cpp for the exact derivation); a 256-sample block at 48 kHz has a
+    // ~5.33 ms deadline, and this detector is not expected to meet it.
+    // This is a Stage 0 correctness exercise, not a deployable real-time
+    // component: T1.9 benchmarks it, and Stage 1's `YinDetector` replaces
+    // this costly inner loop.
     PitchEstimate process(const float* block, int n) noexcept override;
 
 private:
     // Detectable pitch range this detector searches (specs.md section 6).
-    // Lags outside [kMinLagFrequencyHz, kMaxLagFrequencyHz]'s implied lag
-    // range are never considered: searching them would waste the (already
-    // expensive, O(lags * window)) search and would invite octave errors
-    // by allowing implausible periods to win.
+    // Lags outside [kMinFrequencyHz, kMaxFrequencyHz]'s implied lag range
+    // are never treated as candidate answers: searching outside them would
+    // waste the (already expensive, O(lags * window)) search and would
+    // invite octave errors by allowing implausible periods to win.
     static constexpr float kMinFrequencyHz = 65.0f;
     static constexpr float kMaxFrequencyHz = 1100.0f;
 
@@ -77,9 +121,16 @@ private:
     // correlation search at all. See .cpp for the chosen value and why.
     static constexpr float kMinRmsForVoiced = 0.01f;
 
-    // Minimum normalised correlation strength (best lag's correlation sum
-    // divided by the zero-lag energy) required to call a frame voiced. See
-    // .cpp for the chosen value and why.
+    // Minimum normalised correlation strength (a candidate lag's
+    // correlation sum divided by the zero-lag energy r(0) -- not a
+    // geometric mean of the two compared segments' own energies, which is
+    // why this ratio is not clamped to [0, 1] before the final clamp
+    // applied to `confidence` in the .cpp) required for a lag to (a)
+    // qualify as a peak during lag selection and (b) pass the final
+    // voiced/unvoiced gate. See .cpp for the chosen value and why, and for
+    // why using the same threshold for both jobs is part of this
+    // detector's documented octave-too-high limitation (class comment
+    // above).
     static constexpr float kMinNormalizedCorrelation = 0.6f;
 
     // How many times the maximum lag the ring buffer holds. The
@@ -101,9 +152,19 @@ private:
     // real-time safe.
     std::vector<float> m_buffer;
 
-    // Shortest and longest lag, in samples, worth searching -- the
-    // sample-domain equivalent of [kMinFrequencyHz, kMaxFrequencyHz].
-    // Computed once in prepare() from m_sampleRate.
+    // Shortest and longest lag, in samples, that count as a candidate
+    // *answer* -- the sample-domain equivalent of [kMinFrequencyHz,
+    // kMaxFrequencyHz]. Computed once in prepare() from m_sampleRate by
+    // widening (not rounding) toward the requested Hz range, so that range
+    // is genuinely covered end to end: m_minLagSamples truncates
+    // sampleRate/kMaxFrequencyHz *down* (a smaller lag than a plain round
+    // would give, so its implied frequency ceiling is >= kMaxFrequencyHz,
+    // never short of it) and m_maxLagSamples rounds sampleRate/
+    // kMinFrequencyHz *up* (so its implied frequency floor is <=
+    // kMinFrequencyHz). Only lags in [m_minLagSamples, m_maxLagSamples]
+    // are ever returned as an answer -- see m_correlationBaseLag below for
+    // why the correlation search itself computes a couple of lags beyond
+    // this range too.
     int m_minLagSamples = 0;
     int m_maxLagSamples = 0;
 
@@ -118,14 +179,28 @@ private:
     // process() must report unvoiced rather than analyse a partial window.
     int m_samplesFilled = 0;
 
+    // Lag corresponding to m_correlationScratch[0]. This is
+    // max(1, m_minLagSamples - 1) rather than m_minLagSamples itself: lag
+    // selection (see .cpp) only accepts an *interior* scratch index (one
+    // with a real neighbour on both sides) as a peak, so for
+    // m_minLagSamples to ever be selectable, the scratch array must hold
+    // one extra lag below it to serve as that left neighbour. Symmetrically,
+    // the scratch array always extends one lag past m_maxLagSamples on the
+    // top end too (see prepare()). Those one or two extra entries exist
+    // purely to give the true endpoints real neighbours to compare
+    // against; they are never themselves eligible to be selected as the
+    // answer (see .cpp) since they fall outside the declared
+    // [m_minLagSamples, m_maxLagSamples] answer range.
+    int m_correlationBaseLag = 0;
+
     // Scratch space for one lag-indexed correlation sum per candidate lag
-    // in [m_minLagSamples, m_maxLagSamples], sized once in prepare() and
-    // reused (overwritten in full) every process() call -- never resized,
-    // so filling it is bounded, fixed-size work, not the kind of growth
-    // constitution II bans. Needed because lag selection (see .cpp) looks
-    // at each candidate lag's *neighbours* to find the first genuine
-    // correlation peak, which means every lag's sum must be computed and
-    // held before any selection decision can be made.
+    // in [m_correlationBaseLag, m_maxLagSamples + 1], sized once in
+    // prepare() and reused (overwritten in full) every process() call --
+    // never resized, so filling it is bounded, fixed-size work, not the
+    // kind of growth constitution II bans. Needed because lag selection
+    // (see .cpp) looks at each candidate lag's *neighbours* to find the
+    // first genuine correlation peak, which means every lag's sum must be
+    // computed and held before any selection decision can be made.
     std::vector<double> m_correlationScratch;
 };
 

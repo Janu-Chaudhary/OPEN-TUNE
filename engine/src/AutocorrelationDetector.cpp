@@ -19,35 +19,54 @@ void AutocorrelationDetector::prepare(double sampleRate, int maxBlockSize) {
     // Sample-domain equivalents of the detectable pitch range (specs.md
     // section 6: 65 Hz - 1100 Hz). A higher frequency corresponds to a
     // *shorter* period, hence a *smaller* lag -- so the minimum lag comes
-    // from the maximum frequency, and vice versa. std::lround rounds to
-    // the nearest integer sample count; std::max guards the degenerate
-    // case (an absurdly high sample rate) where that could round to zero,
-    // which would make "lag 0" -- comparing the signal to itself
-    // unshifted, always a perfect match -- searchable, which is never a
-    // meaningful pitch estimate.
-    m_minLagSamples = std::max(
-        1, static_cast<int>(std::lround(sampleRate / static_cast<double>(kMaxFrequencyHz))));
+    // from the maximum frequency, and vice versa.
+    //
+    // These *widen* toward the requested range rather than rounding to the
+    // nearest sample, so the declared 65-1100 Hz range is genuinely
+    // covered end to end, not just approximately: static_cast<int> of a
+    // positive double truncates toward zero, i.e. rounds down, so
+    // m_minLagSamples (whose *smaller* value gives a *higher* implied
+    // frequency ceiling) is deliberately the smallest lag that still
+    // covers kMaxFrequencyHz, not the nearest one -- e.g. at 48 kHz,
+    // truncating gives lag 43 (ceiling 1116.3 Hz) rather than rounding to
+    // lag 44 (ceiling only 1090.9 Hz, short of the declared 1100 Hz).
+    // Symmetrically, std::ceil on m_maxLagSamples's division gives the
+    // smallest lag whose implied frequency floor is <= kMinFrequencyHz.
+    // std::max guards the degenerate case (an absurdly high sample rate)
+    // where truncation could give zero, which would make "lag 0" --
+    // comparing the signal to itself unshifted, always a perfect match --
+    // searchable, which is never a meaningful pitch estimate.
+    m_minLagSamples =
+        std::max(1, static_cast<int>(sampleRate / static_cast<double>(kMaxFrequencyHz)));
     m_maxLagSamples =
-        static_cast<int>(std::lround(sampleRate / static_cast<double>(kMinFrequencyHz)));
+        static_cast<int>(std::ceil(sampleRate / static_cast<double>(kMinFrequencyHz)));
 
     // The correlation search, for a given lag L, sums
     // buffer[i] * buffer[i + L] over a comparison window of
-    // m_analysisWindowSamples samples. For the *largest* lag we try
-    // (m_maxLagSamples) to have a full window of valid, in-bounds samples
-    // to compare against, the buffer must hold at least
-    // m_analysisWindowSamples + m_maxLagSamples samples in total. We size
-    // the comparison window itself to kAnalysisWindowLagMultiple (2) times
-    // the longest lag, so that even the lowest frequency in range (65 Hz,
-    // the longest period) gets two full periods of signal inside the
-    // comparison window -- one period is enough to find *a* peak, but a
-    // second period makes that peak far less likely to be a fluke of a
-    // single noisy cycle. At the nominal 48 kHz this works out to roughly
-    // 2 * 738 = 1476 comparison samples plus 738 samples of lag headroom,
-    // i.e. ~2214 samples total -- the same order of magnitude as the
-    // "~2048 samples to see several periods of a low voice" figure this
-    // task's brief uses to motivate needing a ring buffer at all.
+    // m_analysisWindowSamples samples. We size the comparison window
+    // itself to kAnalysisWindowLagMultiple (2) times the longest lag, so
+    // that even the lowest frequency in range (65 Hz, the longest period)
+    // gets two full periods of signal inside the comparison window -- one
+    // period is enough to find *a* peak, but a second period makes that
+    // peak far less likely to be a fluke of a single noisy cycle. At the
+    // nominal 48 kHz this works out to roughly 2 * 739 = 1478 comparison
+    // samples -- the same order of magnitude as the "~2048 samples to see
+    // several periods of a low voice" figure this task's brief uses to
+    // motivate needing a ring buffer at all.
     m_analysisWindowSamples = kAnalysisWindowLagMultiple * m_maxLagSamples;
-    const int bufferSize = m_analysisWindowSamples + m_maxLagSamples;
+
+    // The scratch array (below) computes correlation sums for lags
+    // [m_correlationBaseLag, m_maxLagSamples + 1] -- one lag further on
+    // each end than the declared answer range -- so that both
+    // m_minLagSamples and m_maxLagSamples land on an *interior* scratch
+    // index with a real neighbour on both sides (see the class comment on
+    // m_correlationBaseLag for why that matters). For the buffer to have a
+    // full, in-bounds comparison window even at that widest lag
+    // (m_maxLagSamples + 1), it must hold
+    // m_analysisWindowSamples + m_maxLagSamples + 1 samples in total.
+    m_correlationBaseLag = std::max(1, m_minLagSamples - 1);
+    const int correlationTopLag = m_maxLagSamples + 1;
+    const int bufferSize = m_analysisWindowSamples + correlationTopLag;
 
     // Sized once, here, and never resized: process() only ever writes
     // into existing elements of m_buffer (constitution II, engine/CLAUDE.md
@@ -55,10 +74,11 @@ void AutocorrelationDetector::prepare(double sampleRate, int maxBlockSize) {
     m_buffer.assign(static_cast<std::size_t>(bufferSize), 0.0f);
     m_samplesFilled = 0;
 
-    // One scratch slot per candidate lag (see the class comment on
-    // m_correlationScratch for why the whole array is needed before a
-    // lag can be chosen).
-    const int lagCount = m_maxLagSamples - m_minLagSamples + 1;
+    // One scratch slot per lag in [m_correlationBaseLag, correlationTopLag]
+    // (see the class comment on m_correlationScratch for why the whole
+    // array, including the one or two padding entries beyond the declared
+    // answer range, is needed before a lag can be chosen).
+    const int lagCount = correlationTopLag - m_correlationBaseLag + 1;
     m_correlationScratch.assign(static_cast<std::size_t>(lagCount), 0.0);
 }
 
@@ -146,15 +166,21 @@ PitchEstimate AutocorrelationDetector::process(const float* block, int n) noexce
 
     // --- Autocorrelation search over the candidate lag range ---------------
     //
-    // For each candidate lag, sum buffer[i] * buffer[i + lag] across the
-    // comparison window and stash it in m_correlationScratch. This is the
+    // For each lag from m_correlationBaseLag up to m_maxLagSamples + 1
+    // (the declared answer range [m_minLagSamples, m_maxLagSamples] plus
+    // one padding lag on each end -- see the m_correlationBaseLag class
+    // comment), sum buffer[i] * buffer[i + lag] across the comparison
+    // window and stash it in m_correlationScratch. This is the
     // O(lags * window) cost the task brief calls out as "what pitch
-    // detection actually costs" for the naive method -- YIN (Stage 1) does
-    // the same shape of search but with a cheaper difference function and
-    // an early-abort step.
-    const int lagCount = m_maxLagSamples - m_minLagSamples + 1;
+    // detection actually costs" for the naive method (~1.0 million
+    // multiply-adds per call at 48 kHz nominal sizing: roughly
+    // (m_maxLagSamples - m_minLagSamples) * m_analysisWindowSamples =
+    // ~696 lags * ~1478 samples) -- YIN (Stage 1) does the same shape of
+    // search but with a cheaper difference function and an early-abort
+    // step.
+    const int lagCount = static_cast<int>(m_correlationScratch.size());
     for (int lagIndex = 0; lagIndex < lagCount; ++lagIndex) {
-        const int lag = m_minLagSamples + lagIndex;
+        const int lag = m_correlationBaseLag + lagIndex;
         double correlation = 0.0;
         for (int i = 0; i < windowSamples; ++i) {
             const double a = static_cast<double>(m_buffer[static_cast<std::size_t>(i)]);
@@ -189,20 +215,33 @@ PitchEstimate AutocorrelationDetector::process(const float* block, int n) noexce
     //
     // "Local peak" here means an *interior* index i (both neighbours
     // present in the scratch array) where correlation[i] is >= both
-    // correlation[i-1] and correlation[i+1]. The two array endpoints
-    // (m_minLagSamples and m_maxLagSamples) are deliberately never treated
-    // as peaks here, even though one has no left neighbour and the other
-    // no right: correlation is naturally high and still falling near the
-    // shortest lags we search (a short shift barely decorrelates a smooth
-    // signal from itself, however far its true period is), so the very
-    // first scratch entry can easily be higher than its one visible
-    // neighbour without being anywhere near a genuine period -- exactly
-    // the false "peak" this loop must not report as the pitch. Real
-    // periodic peaks always have signal on both sides showing the
-    // correlation rising into them and falling back out; only an interior
-    // index can show that.
+    // correlation[i-1] and correlation[i+1]. Only indices whose lag falls
+    // in the declared answer range [m_minLagSamples, m_maxLagSamples] are
+    // ever eligible to be selected -- searchStartIndex/searchEndIndex
+    // below are exactly that range's position in m_correlationScratch.
+    // Thanks to prepare() padding the scratch array by one extra lag on
+    // each end (m_correlationBaseLag, m_maxLagSamples + 1), both
+    // m_minLagSamples and m_maxLagSamples normally land on a genuine
+    // interior index with a real neighbour on both sides -- the padding
+    // entries themselves are the only indices ever excluded from
+    // candidacy by construction (std::max(1, ...) below only bites in the
+    // degenerate case m_correlationBaseLag == m_minLagSamples, i.e. an
+    // absurdly high sample rate where m_minLagSamples is already 1).
+    //
+    // This matters because correlation is naturally high and still
+    // falling near the shortest lags we search (a short shift barely
+    // decorrelates a smooth signal from itself, however far its true
+    // period is) -- so a lag right at the edge of the search range can
+    // easily be higher than the *one* neighbour visible to it without
+    // being anywhere near a genuine period. Requiring a real neighbour on
+    // both sides is what rules that false "peak" out. Real periodic peaks
+    // always have signal on both sides showing the correlation rising
+    // into them and falling back out; only a true interior index can show
+    // that.
+    const int searchStartIndex = std::max(1, m_minLagSamples - m_correlationBaseLag);
+    const int searchEndIndex = std::min(lagCount - 2, m_maxLagSamples - m_correlationBaseLag);
     int bestLagIndex = -1;
-    for (int lagIndex = 1; lagIndex < lagCount - 1; ++lagIndex) {
+    for (int lagIndex = searchStartIndex; lagIndex <= searchEndIndex; ++lagIndex) {
         const double value = m_correlationScratch[static_cast<std::size_t>(lagIndex)];
         const double left = m_correlationScratch[static_cast<std::size_t>(lagIndex - 1)];
         const double right = m_correlationScratch[static_cast<std::size_t>(lagIndex + 1)];
@@ -217,14 +256,17 @@ PitchEstimate AutocorrelationDetector::process(const float* block, int n) noexce
     }
 
     // No local peak anywhere in range cleared the voicing threshold: fall
-    // back to the single largest correlation sum found (e.g. a signal
-    // whose correlation rises monotonically to the edge of the search
-    // range rather than forming a clean interior peak). If even that best
-    // candidate does not clear the threshold, this frame is unvoiced --
-    // e.g. white noise, which has no lag anywhere near a perfect
-    // self-match.
+    // back to the single largest correlation sum found within the declared
+    // answer range (e.g. a signal whose correlation rises monotonically to
+    // the edge of the range rather than forming a clean interior peak).
+    // The padding entries outside [searchStartIndex, searchEndIndex] are
+    // excluded here too -- they exist only to give the true endpoints
+    // neighbours, never to be answers themselves. If even the best
+    // in-range candidate does not clear the threshold, this frame is
+    // unvoiced -- e.g. white noise, which has no lag anywhere near a
+    // perfect self-match.
     if (bestLagIndex < 0) {
-        for (int lagIndex = 0; lagIndex < lagCount; ++lagIndex) {
+        for (int lagIndex = searchStartIndex; lagIndex <= searchEndIndex; ++lagIndex) {
             if (bestLagIndex < 0 ||
                 m_correlationScratch[static_cast<std::size_t>(lagIndex)] >
                     m_correlationScratch[static_cast<std::size_t>(bestLagIndex)]) {
@@ -242,6 +284,20 @@ PitchEstimate AutocorrelationDetector::process(const float* block, int n) noexce
     // the signal actually is at that lag, independent of its absolute
     // loudness. zeroLagEnergy > 0 is already guaranteed here by the RMS
     // gate above (rms >= kMinRmsForVoiced > 0), so this division is safe.
+    //
+    // Note this denominator is r(0) of the comparison window alone, not
+    // the geometric mean sqrt(r_a(0) * r_b(0)) of the two *shifted*
+    // segments actually being compared (buffer[0..window) and
+    // buffer[lag..window+lag)) that a stricter normalised
+    // cross-correlation would use. Those two segments overlap almost
+    // entirely for this detector's lags (lag is small relative to
+    // windowSamples), so r(0) is a close enough stand-in for a stationary
+    // signal, and it is far cheaper (one energy sum, computed once,
+    // instead of one per candidate lag). The cost: for strongly
+    // non-stationary input this ratio is not mathematically bounded to
+    // [0, 1] the way a true normalised cross-correlation would be -- hence
+    // the explicit clamp on `confidence` below. Good enough for this
+    // Stage 0 placeholder; not a claim of a rigorous normalised statistic.
     const double normalizedCorrelation = bestCorrelation / zeroLagEnergy;
 
     // kMinNormalizedCorrelation = 0.6: a genuine sine or voiced tone's
@@ -259,7 +315,11 @@ PitchEstimate AutocorrelationDetector::process(const float* block, int n) noexce
         return PitchEstimate{0.0f, 0.0f, false};
     }
 
-    const int bestLag = m_minLagSamples + bestLagIndex;
+    // bestLagIndex is an index into m_correlationScratch, which starts at
+    // m_correlationBaseLag (not necessarily m_minLagSamples -- see the
+    // class comment on m_correlationBaseLag), so the lag it names is
+    // recovered relative to that base.
+    const int bestLag = m_correlationBaseLag + bestLagIndex;
 
     // Period (in samples) -> frequency (in Hz): f = sampleRate / lag.
     const float frequencyHz = static_cast<float>(m_sampleRate / static_cast<double>(bestLag));
