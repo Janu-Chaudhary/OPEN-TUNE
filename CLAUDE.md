@@ -42,6 +42,11 @@ If you need one, you are writing host code — put it in `tools/` or `apps/`.
   algorithm and why each magic number has its value, with a source link where one exists.
 - Format with `clang-format` (LLVM style, 100 cols) before every commit.
 
+## Session start
+
+Read `tasks.md`. Name the first `[ ]` task, restate its **Done when**, and wait for a go.
+Do not read the whole repo. One task per session; `/clear` after each commit.
+
 ## Workflow
 
 1. Pick the next unchecked task in `tasks.md`. Work on one task at a time.
@@ -52,6 +57,18 @@ If you need one, you are writing host code — put it in `tools/` or `apps/`.
 
 Commit format: `type(scope): summary` — e.g. `feat(detector): add YIN pitch detection`.
 Types: `feat` `fix` `test` `refactor` `docs` `build` `chore`.
+
+## Audio and verification
+
+- **Never read audio files.** `.wav` is binary; it poisons context. Inspect audio only
+  through `python3 tools/analyze.py` — pitch track, cents error, and a spectrogram PNG,
+  which you can view. You cannot hear; the owner does the listening.
+- **Never claim a test passes without pasting the `ctest` summary line.** Never claim
+  audio is correct without a number. Constitution VII.
+- Cap output: `cmake --build build 2>&1 | tail -30`, `ctest --output-on-failure`. Never `-V`.
+- Resolved open questions get a 20-line record in `docs/decisions/`. Listening
+  checkpoints go in `docs/listening-log.md`.
+- `engine/CLAUDE.md` holds the real-time rules and loads when you work there.
 
 ## Working with me (the human)
 
@@ -70,7 +87,8 @@ Types: `feat` `fix` `test` `refactor` `docs` `build` `chore`.
 5. `engine/` stays platform-free.
 6. **One identity only:** `Janu-Chaudhary <januchaudhary2004@gmail.com>`.
    Remotes use `github-januchaudhary:`, never `github.com:`.
-   **Never run `gh`** here — it is authenticated as a different account.
+   **Never run `gh`** — it is authenticated as a different account. A `PreToolUse`
+   hook in `.claude/settings.json` denies it, `--no-verify`, and `github.com` remotes.
 
 ## Fresh clone setup
 

@@ -146,8 +146,14 @@ git config core.hooksPath .githooks
 Until that is run, the hooks exist but do nothing.
 
 **These hooks are a guard against mistakes, not a security control.**
-`git commit --no-verify` bypasses them, and nothing can intercept a `gh` command.
-They exist to make the wrong thing require deliberate effort.
+`git commit --no-verify` bypasses them at the shell. They exist to make the wrong
+thing require deliberate effort.
+
+6. **Claude Code is guarded separately.** `.claude/settings.json` denies `gh` as a
+   permission rule, and a `PreToolUse` hook (`.claude/hooks/guard-bash.py`) rejects
+   any command that invokes `gh`, passes `--no-verify` to git, adds a `github.com`
+   remote, or sets a foreign `user.email` — before it runs. This binds the agent, not
+   a human at a terminal. Regression tests: `.claude/hooks/guard-bash.test.sh`.
 
 Commit signing is not yet configured; the author field is therefore assertable
 but not cryptographically provable. Adding it is tracked as Q6 in `specs.md`.

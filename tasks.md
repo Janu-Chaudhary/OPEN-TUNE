@@ -14,6 +14,13 @@ properly once the stage before them has taught us what they actually need.
 *Goal: a WAV goes in, a pitch-shifted WAV comes out. It will sound rough. That is fine —
 the point is that every piece exists and is connected.*
 
+### T0.0 — Toolchain `[ ]` *(owner, needs sudo)*
+`sudo apt install cmake ninja-build clang-format valgrind python3-numpy python3-scipy python3-matplotlib`
+**Done when:** `cmake --version`, `clang-format --version`, `valgrind --version` all print,
+and `python3 -c "import numpy, scipy, matplotlib"` exits 0.
+**Note:** numpy/scipy/matplotlib are dev tooling for `tools/analyze.py` only — never a
+runtime dependency of the engine.
+
 ### T0.1 — Project skeleton `[ ]`
 Create the CMake project: `engine/` library target, `tests/` target, `third_party/`.
 C++17, warnings as errors. Add the test framework.
@@ -91,10 +98,18 @@ host will use, so Stage 3 changes only the caller.
 **Done when:** it processes a real vocal recording end to end and the output is audibly
 pitch-shifted. (FR11)
 
+### T0.12 — Analysis tool `[ ]`
+`tools/analyze.py in.wav [--out report.png]`: pitch track (Hz and MIDI), RMS envelope,
+voiced/unvoiced regions, and a spectrogram, rendered to one PNG. This is how Claude sees
+audio — it cannot hear. Also prints a cents-error summary when given `--ref target.wav`.
+**Depends on:** T0.0, T0.11
+**Done when:** running it on the T0.11 output produces a PNG where the corrected pitch
+track visibly snaps to semitone lines, and the numbers match the T0.9 test expectations.
+
 ### 🎧 Stage 0 checkpoint
 Record yourself singing, run it through the CLI, listen. Expect artifacts — chipmunk
-effect, warbling, clicks. **Write down what you hear.** That list is the agenda for
-Stages 1 and 2.
+effect, warbling, clicks. **Write down what you hear in `docs/listening-log.md`.**
+That list is the agenda for Stages 1 and 2.
 
 ---
 
