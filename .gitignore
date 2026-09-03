@@ -12,3 +12,8 @@ compile_commands.json
 .DS_Store
 .venv/
 .superpowers/
+
+# Editor lock/swap files
+.~lock.*#
+*.swp
+*~
