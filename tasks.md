@@ -70,7 +70,7 @@ Write `engine/include/opentune/PitchCorrector.h`.
 **Depends on:** T0.1
 **Done when:** compiles; a stub pass-through subclass proves the interface works.
 
-### T0.7 — Naive resampling corrector `[ ]`
+### T0.7 — Naive resampling corrector `[x]`
 `ResampleCorrector` — read the input faster or slower with linear interpolation.
 This changes pitch *and* duration, which is wrong, and it moves formants, which is the
 chipmunk effect. Shipping it deliberately: it makes the pipeline audible today and it
