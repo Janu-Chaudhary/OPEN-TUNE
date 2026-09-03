@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# OpenTune identity guard, push side. See constitution.md IX.
+#
+# pre-commit cannot catch this case: commits already exist, someone adds a
+# github.com remote and pushes. Plain github.com authenticates as janu-droid.
+
+set -euo pipefail
+
+ALLOWED_EMAIL="januchaudhary2004@gmail.com"
+SSH_ALIAS="github-januchaudhary"
+remote_name="${1:-}"
+remote_url="${2:-}"
+
+fail() { printf '\n\033[31mBLOCKED by OpenTune identity guard (push)\033[0m\n%s\n\n' "$1" >&2; exit 1; }
+
+case "$remote_url" in
+    *"$SSH_ALIAS"*) ;;
+    "") fail "Could not determine the remote URL. Refusing to push." ;;
+    *) fail \
+"Refusing to push to '$remote_name' at:
+    $remote_url
+
+Only '$SSH_ALIAS:' remotes are permitted. Plain github.com and HTTPS URLs
+authenticate as janu-droid, the wrong account.
+
+  Fix:  git remote set-url $remote_name $SSH_ALIAS:<owner>/<repo>.git" ;;
+esac
+
+# Reject if any commit being pushed carries a foreign author.
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        range="$local_sha"
+    else
+        range="$remote_sha..$local_sha"
+    fi
+    bad="$(git log --format='%H %ae' "$range" 2>/dev/null | grep -v " $ALLOWED_EMAIL\$" || true)"
+    [ -z "$bad" ] || fail "These commits have a foreign author email:
+
+$bad
+
+Only $ALLOWED_EMAIL may appear in this repository's history."
+done
+
+exit 0

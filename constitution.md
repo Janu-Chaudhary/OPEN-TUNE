@@ -120,12 +120,16 @@ Enforcement, in order of reliability:
 
 1. **`.githooks/pre-commit`** blocks any commit whose author name or email is
    wrong, and any commit made while a remote points at plain `github.com`.
-   Verified blocking on 2026-09-03.
-2. **Repo-local `user.name` / `user.email`** are pinned, so a change to the
+2. **`.githooks/pre-push`** blocks any push to a remote that is not the
+   `github-januchaudhary` alias, and any push containing a commit with a foreign
+   author email. This covers the case `pre-commit` cannot see: commits that
+   already exist being pushed to a newly added remote.
+   Both hooks verified blocking on 2026-09-03.
+3. **Repo-local `user.name` / `user.email`** are pinned, so a change to the
    global config cannot leak in.
-3. **Remotes must use `github-januchaudhary:owner/repo.git`.** Never
+4. **Remotes must use `github-januchaudhary:owner/repo.git`.** Never
    `git@github.com:` and never an HTTPS URL.
-4. **The `gh` CLI is forbidden in this repository.** It is authenticated as
+5. **The `gh` CLI is forbidden in this repository.** It is authenticated as
    `janu-droid` and holds `repo` scope, so every `gh` command would act as the
    wrong account. Repository creation, pull requests, and releases are done by
    the owner in a browser, or after a second `gh` account is configured.
