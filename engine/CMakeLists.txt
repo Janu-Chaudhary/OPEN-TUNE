@@ -2,6 +2,7 @@
 # code only (constitution IV). No platform, file-format, UI or threading headers.
 add_library(opentune STATIC
     src/Version.cpp
+    src/ScaleQuantizer.cpp
 )
 target_include_directories(opentune PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
