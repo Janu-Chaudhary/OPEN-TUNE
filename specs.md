@@ -178,6 +178,13 @@ struct Params {
 exposes `prepare` / `reset` / `process` / `latencySamples`. Parameters arrive from
 other threads via lock-free atomics.
 
+The engine clamps the pitch ratio it computes before handing it to the corrector
+(FR15). Detection is fallible — an octave error produces a ratio near 2.0 or 0.5,
+which no corrector handles gracefully and which is musically meaningless for pitch
+*correction*, where the input is at most a semitone or two from its target. The
+clamp is the engine's responsibility, not the corrector's: the corrector is told
+what ratio to apply and should not have to second-guess it.
+
 ## 8. Functional requirements
 
 | ID | Requirement |
@@ -196,6 +203,7 @@ other threads via lock-free atomics.
 | FR12 | Real-time host captures the microphone and plays corrected audio to the output |
 | FR13 | Desktop app allows recording, live monitoring, parameter adjustment, and WAV export |
 | FR14 | Android app provides the same core loop on a phone |
+| FR15 | Engine clamps the pitch ratio to a musical range before correction, so a detection octave error cannot produce garbage output |
 
 ## 9. Acceptance criteria
 

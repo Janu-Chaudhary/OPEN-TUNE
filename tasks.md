@@ -87,9 +87,25 @@ is bit-identical to input.
 ### T0.9 — `Engine` wiring `[ ]`
 Own one of each interface. Per block: detect → quantize → compute ratio → correct.
 Unvoiced input passes through untouched (FR2). Strength is not yet applied.
+The computed ratio is **clamped** to the musical range before it reaches the
+corrector (FR15) — see the discovered constraint below.
 **Depends on:** T0.4, T0.5, T0.7, T0.8
 **Done when:** a 445 Hz sine in produces roughly 440 Hz out; silence in produces
-silence out unmodified; block boundaries introduce no discontinuity.
+silence out unmodified; block boundaries introduce no discontinuity; a detected
+pitch an octave away from the target yields a clamped ratio, not ratio 2.0 or 0.5.
+
+**Discovered constraint — clamp `pitchRatio` (from T0.4 + T0.7 reviews).**
+Real correction ratios live in roughly 0.94–1.06; one semitone is 1.0595. Two facts
+found during wave 2 combine badly at this seam:
+- `ResampleCorrector` starves for input above ratio 1.0 — producing *n* output
+  samples needs *ratio × n* input samples, but only *n* arrive per block, so it
+  holds its last sample and output becomes block-size dependent.
+- `AutocorrelationDetector`'s octave errors lean **high**, not low
+  (`docs/decisions/0003`), so a bad frame asks for ratio ≈ 2.0 exactly where the
+  corrector is weakest.
+
+Both components passed review individually; the failure exists only where they meet.
+T0.9 is the first task that joins them, so the clamp belongs here.
 
 ### T0.10 — WAV I/O `[ ]`
 Vendor `dr_wav` into `third_party/`. Add `tools/autotune-cli/WavFile.h` — mono float
@@ -194,4 +210,20 @@ That list is the agenda for Stages 1 and 2.
 ## Discovered during work
 *New tasks found mid-implementation go here, then get slotted into a stage.*
 
-*(empty)*
+- [ ] **D1 — Clamp `pitchRatio` in the engine.** Folded into T0.9 rather than left
+  standing alone; kept here as the record of where it came from. Detector octave
+  errors (high-biased) feed the corrector's starvation region above ratio 1.0.
+  Source: T0.4 and T0.7 reviews, wave 2.
+- [ ] **D2 — Fix transitive standard-library includes.** Two independent
+  implementations relied on headers they did not include: `<algorithm>` (T0.2) and
+  `<cstddef>` (T0.6). One root cause, so one cleanup pass over `engine/` and
+  `tests/`, not scattered fixes. Slot: end of Stage 0, with the whole-branch review.
+- [ ] **D3 — Resolve the denormal flush-to-zero rule for `ResampleCorrector`.**
+  `engine/CLAUDE.md` requires it; the corrector neither applies nor explicitly
+  waives it. Slot: Stage 3, with the real-time safety audit (T3.5).
+- [ ] **D4 — Benchmark `AutocorrelationDetector` against the block budget.**
+  ~1M multiply-adds per block is constitution-safe but not proven deadline-safe
+  against 5.33 ms. Already covered by T1.9; noted here so it is not forgotten.
+
+*Six further minor review findings are held in `.superpowers/sdd/tasks/progress.md`
+for the whole-branch review at the end of Stage 0.*
