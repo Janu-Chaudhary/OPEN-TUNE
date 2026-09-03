@@ -56,6 +56,15 @@ Do not read the whole repo. One task per session; `/clear` after each commit.
 4. Show the diff and stop for review before committing.
 5. On approval: commit with a conventional message, tick the task in `tasks.md`.
 
+**Doc sweep — run at every wave boundary, not "later".** Docs cannot be committed while an
+implementer is live (its work is staged; a commit would sweep it), so the sweep is a named
+step, not a good intention:
+- tick every completed task in `tasks.md`
+- write a `docs/decisions/` record for any dependency chosen, algorithm deviating from the
+  obvious one, or constraint discovered the hard way
+- update `specs.md` if a requirement, approval, or known limitation changed
+- add any new file to the `docs/README.md` catalogue
+
 Commit format: `type(scope): summary` — e.g. `feat(detector): add YIN pitch detection`.
 Types: `feat` `fix` `test` `refactor` `docs` `build` `chore`.
 

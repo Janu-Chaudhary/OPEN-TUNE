@@ -123,6 +123,12 @@ public:
 ```
 Implementations: `AutocorrelationDetector` (naive, Stage 0), `YinDetector` (Stage 1).
 
+**Known octave bias, Stage 0 → Stage 1.** `AutocorrelationDetector` selects the first
+qualifying correlation peak rather than the global maximum, so its octave errors lean
+**high** (it can lock onto the first harmonic when the fundamental is weak), not low as
+textbook autocorrelation would. Stage 1's work against AC7 must start from that fact.
+Reasoning: `docs/decisions/0003-first-peak-autocorrelation.md`.
+
 A detector receives 256-sample blocks but analyses a ~2048-sample window, so it keeps an
 internal ring buffer. That buffer is **allocated in `prepare()` and never resized**
 (constitution II). `process()` returns the most recent estimate available; before the
@@ -248,13 +254,16 @@ Each stage ends in something audible. Stage 0 is measured in days.
 ## 11. Dependencies
 
 All permissive. All vendored into `third_party/`. Verified 2026-09-03.
+Owner-approved: doctest (2026-09-04, see `docs/decisions/0001`), dr_wav (2026-09-04, see
+`docs/decisions/0002`). Signalsmith Stretch and miniaudio are **not yet approved** — each
+needs its own approval at Stage 2 and Stage 3 respectively (constitution I).
 
 | Library | Licence | Used for | Stage |
 |---|---|---|---|
 | dr_wav | Public domain / MIT-0 | WAV read/write in the CLI | 0 |
 | Signalsmith Stretch | MIT | Pitch shifting with formant handling | 2 |
 | miniaudio | Public domain / MIT-0 | Cross-platform audio I/O | 3 |
-| doctest | MIT | Test framework | 0 |
+| doctest | MIT | Test framework | 0 | 
 
 Rejected: **Rubber Band** (GPL/commercial), **JUCE** (GPL/commercial), **aubio** (GPL).
 Under consideration for Stage 2 if Signalsmith's formant handling proves insufficient:

@@ -108,6 +108,11 @@ This repository belongs to exactly one GitHub identity:
 **`Janu-Chaudhary <januchaudhary2004@gmail.com>`**, reached over SSH as
 **`github-januchaudhary`**.
 
+The repository is **private**: `github-januchaudhary:Janu-Chaudhary/OPEN-TUNE.git`.
+Recorded 2026-09-04; first push verified that every commit in history carries exactly one
+author email. The owner supplied this remote as `git@github.com:Janu-Chaudhary/OPEN-TUNE.git`,
+which the guards correctly refused — that form authenticates as the wrong account.
+
 No other account may author, commit to, or push this repository.
 
 **Why this needs a rule rather than good intentions:** a second GitHub account

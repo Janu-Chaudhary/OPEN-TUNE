@@ -32,7 +32,7 @@ C++17, warnings as errors. Add the test framework.
 **Done when:** `cmake -B build && cmake --build build && ctest --test-dir build` runs
 a single trivially passing test.
 
-### T0.2 — Test signal generators `[ ]`
+### T0.2 — Test signal generators `[x]`
 `tests/support/Signals.h`: generate sine waves, silence, white noise, and a linear
 pitch sweep, at a given frequency, duration, and sample rate.
 **Depends on:** T0.1
@@ -41,7 +41,7 @@ within 1%, and a zero-crossing count matching 440 Hz within 1%.
 **Note:** this is the foundation of every later test — everything downstream measures
 against known-correct synthetic input.
 
-### T0.3 — `PitchDetector` interface `[ ]`
+### T0.3 — `PitchDetector` interface `[x]`
 Write `engine/include/opentune/PitchDetector.h`: `PitchEstimate`, the abstract class,
 `prepare` / `reset` / `process`. Header only, no implementation.
 **Depends on:** T0.1
@@ -56,7 +56,7 @@ genuinely works, and the conceptual basis for YIN in Stage 1.
 **Done when:** detects 110/220/440/880 Hz sines within ±20 cents; reports `voiced=false`
 for silence. (±20 cents is deliberately loose — AC1's ±5 cents arrives with YIN.)
 
-### T0.5 — `ScaleQuantizer`, chromatic `[ ]`
+### T0.5 — `ScaleQuantizer`, chromatic `[x]`
 Frequency → MIDI note → round to nearest → back to frequency.
 **Depends on:** T0.1
 **Done when:** 440 Hz → 440 Hz (A4 exactly); 445 Hz → 440 Hz; 455 Hz → 466.16 Hz (A#4);
@@ -65,7 +65,7 @@ A4 = 440 Hz reference; correct across the full C2–C6 range.
 A4/A#4 decision boundary is MIDI 69.5 = 452.89 Hz, so 452 Hz snaps *down* to 440 Hz.
 455 Hz (MIDI 69.58) is the correct example of snapping up to A#4.
 
-### T0.6 — `PitchCorrector` interface `[ ]`
+### T0.6 — `PitchCorrector` interface `[x]`
 Write `engine/include/opentune/PitchCorrector.h`.
 **Depends on:** T0.1
 **Done when:** compiles; a stub pass-through subclass proves the interface works.
@@ -79,7 +79,7 @@ makes the problem Stage 2 solves obvious by ear.
 **Done when:** a 440 Hz sine at ratio 2.0 produces a 880 Hz sine (±20 cents); ratio 1.0
 is bit-identical to input.
 
-### T0.8 — `Params` struct `[ ]`
+### T0.8 — `Params` struct `[x]`
 `engine/include/opentune/Params.h` with documented defaults and valid ranges.
 **Depends on:** T0.1
 **Done when:** compiles; a test asserts defaults match specs.md §7.1.

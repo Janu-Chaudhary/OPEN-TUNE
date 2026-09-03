@@ -18,8 +18,16 @@ either should be, or should not exist.
 
 | Path | Purpose |
 |---|---|
-| `docs/decisions/` | Decision catalogue. One file per resolved open question; reasoning, not just outcome |
-| `docs/listening-log.md` | What human ears said at each checkpoint. Append-only |
+| `docs/decisions/` | Decision catalogue — reasoning, not just outcome. See its README for what earns a record |
+| `docs/listening-log.md` | What human ears said at each checkpoint. Append-only. **Owner writes these; Claude cannot hear** |
+
+### Decisions on record
+
+| # | Decision |
+|---|---|
+| 0001 | doctest as the test framework |
+| 0002 | dr_wav for WAV file I/O |
+| 0003 | First-peak rather than global-max lag selection (inverts the octave bias — bears on AC7) |
 
 ## Guards
 
@@ -29,7 +37,8 @@ either should be, or should not exist.
 | `.claude/settings.json` | Permission allow/deny lists and hook wiring for Claude Code |
 | `.claude/hooks/guard-bash.py` | Denies `gh`, `--no-verify`, `github.com` remotes before they run |
 | `.claude/hooks/guard-bash.test.sh` | Regression tests for the guard |
-| `.claude/hooks/format-cpp.sh` | clang-format on every edited C++ file |
+| `.claude/hooks/format-cpp.sh` | clang-format on files edited via Edit/Write |
+| `.claude/hooks/format-changed.sh` | clang-format on files changed by any Bash command — closes the gap the first hook leaves |
 
 ## Code (created as tasks complete)
 
@@ -42,7 +51,15 @@ either should be, or should not exist.
 | `tools/autotune-live/` | Real-time microphone monitor | 3 |
 | `apps/desktop/` | Minimal desktop GUI | 6 |
 | `apps/android/` | Android app | 7 |
-| `third_party/` | Vendored permissive dependencies, each with its LICENSE | as approved |
+| `third_party/` | Vendored permissive dependencies, each with its LICENSE and VENDORED.md | as approved |
+
+## Development environment
+
+| Path | Purpose |
+|---|---|
+| `requirements-dev.txt` | Pinned Python deps for `tools/analyze.py`. Installed into `.venv/`, never system-wide |
+| `.venv/` | Project virtualenv (gitignored). A user-local numpy 2.x shadows apt's, so a venv is required, not optional |
+| `.clang-format` | LLVM base, 100 cols. Enforced by the `format-check` build target |
 
 ## Reading order for a newcomer
 

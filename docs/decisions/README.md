@@ -1,7 +1,14 @@
 # Decisions
 
-One file per resolved open question from `specs.md` §12. Short — the point is that the
-*reasoning* survives, not just the outcome. Name: `NNNN-short-slug.md`.
+A record per decision worth remembering. Two sources:
+
+1. A resolved open question from `specs.md` §12.
+2. A significant design decision made during implementation — a dependency chosen, an
+   algorithm deviating from the obvious one, a constraint discovered the hard way.
+
+Short — the point is that the *reasoning* survives, not just the outcome. The consequences
+section matters most: it is what a future contributor needs and what the code cannot say.
+Name: `NNNN-short-slug.md`.
 
 Template:
 
