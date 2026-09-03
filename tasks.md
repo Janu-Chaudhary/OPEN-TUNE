@@ -48,7 +48,7 @@ Write `engine/include/opentune/PitchDetector.h`: `PitchEstimate`, the abstract c
 **Done when:** it compiles, and a test defines a stub subclass returning a fixed value,
 proving the interface is usable.
 
-### T0.4 — Naive autocorrelation detector `[ ]`
+### T0.4 — Naive autocorrelation detector `[x]`
 `AutocorrelationDetector` — find the lag at which the signal best correlates with
 itself; that lag is the period, and pitch is its reciprocal. The simplest method that
 genuinely works, and the conceptual basis for YIN in Stage 1.
