@@ -59,8 +59,11 @@ for silence. (±20 cents is deliberately loose — AC1's ±5 cents arrives with 
 ### T0.5 — `ScaleQuantizer`, chromatic `[ ]`
 Frequency → MIDI note → round to nearest → back to frequency.
 **Depends on:** T0.1
-**Done when:** 440 Hz → 440 Hz (A4 exactly); 445 Hz → 440 Hz; 452 Hz → 466.16 Hz (A#4);
+**Done when:** 440 Hz → 440 Hz (A4 exactly); 445 Hz → 440 Hz; 455 Hz → 466.16 Hz (A#4);
 A4 = 440 Hz reference; correct across the full C2–C6 range.
+**Corrected 2026-09-04:** this line originally read "452 Hz → 466.16 Hz", which is wrong. The
+A4/A#4 decision boundary is MIDI 69.5 = 452.89 Hz, so 452 Hz snaps *down* to 440 Hz.
+455 Hz (MIDI 69.58) is the correct example of snapping up to A#4.
 
 ### T0.6 — `PitchCorrector` interface `[ ]`
 Write `engine/include/opentune/PitchCorrector.h`.
