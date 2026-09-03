@@ -134,8 +134,20 @@ Enforcement, in order of reliability:
    wrong account. Repository creation, pull requests, and releases are done by
    the owner in a browser, or after a second `gh` account is configured.
 
-The hook is committed to the repository and activated by `core.hooksPath`, so it
-survives a fresh clone rather than living in an untracked `.git/hooks`.
+The hooks are committed to the repository rather than left in an untracked
+`.git/hooks`, so they travel with the code. They are **not** automatically active
+in a fresh clone: `core.hooksPath` lives in `.git/config`, which is never cloned.
+Every clone must run:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Until that is run, the hooks exist but do nothing.
+
+**These hooks are a guard against mistakes, not a security control.**
+`git commit --no-verify` bypasses them, and nothing can intercept a `gh` command.
+They exist to make the wrong thing require deliberate effort.
 
 Commit signing is not yet configured; the author field is therefore assertable
 but not cryptographically provable. Adding it is tracked as Q6 in `specs.md`.

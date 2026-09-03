@@ -71,3 +71,9 @@ Types: `feat` `fix` `test` `refactor` `docs` `build` `chore`.
 6. **One identity only:** `Janu-Chaudhary <januchaudhary2004@gmail.com>`.
    Remotes use `github-januchaudhary:`, never `github.com:`.
    **Never run `gh`** here — it is authenticated as a different account.
+
+## Fresh clone setup
+
+```bash
+git config core.hooksPath .githooks   # REQUIRED - identity guards are inert without it
+```
