@@ -21,7 +21,9 @@
       "Bash(find *)",
       "Bash(wc *)",
       "Bash(head *)",
-      "Bash(tail *)"
+      "Bash(tail *)",
+      "Bash(.venv/bin/python tools/*)",
+      "Bash(.venv/bin/pip *)"
     ],
     "deny": [
       "Bash(gh *)",

@@ -1,0 +1,5 @@
+# Dev tooling for tools/analyze.py only. NEVER a runtime dependency of the engine.
+# Pinned so the analysis output is reproducible across machines.
+numpy==2.2.6
+scipy==1.15.3
+matplotlib==3.10.3

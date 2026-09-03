@@ -14,12 +14,16 @@ properly once the stage before them has taught us what they actually need.
 *Goal: a WAV goes in, a pitch-shifted WAV comes out. It will sound rough. That is fine —
 the point is that every piece exists and is connected.*
 
-### T0.0 — Toolchain `[ ]` *(owner, needs sudo)*
-`sudo apt install cmake ninja-build clang-format valgrind python3-numpy python3-scipy python3-matplotlib`
+### T0.0 — Toolchain `[x]` *(owner, needs sudo)*
+`sudo apt install cmake ninja-build clang-format valgrind`, then
+`python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`.
 **Done when:** `cmake --version`, `clang-format --version`, `valgrind --version` all print,
-and `python3 -c "import numpy, scipy, matplotlib"` exits 0.
-**Note:** numpy/scipy/matplotlib are dev tooling for `tools/analyze.py` only — never a
-runtime dependency of the engine.
+and `.venv/bin/python -c "import numpy, scipy, matplotlib"` exits 0.
+**Note:** Python analysis deps live in a project venv, not system or `~/.local` — a
+user-local numpy 2.x was found shadowing apt's 1.x and breaking apt scipy/matplotlib.
+They are dev tooling for `tools/analyze.py` only — never a runtime dependency of the engine.
+Verified 2026-09-04: cmake 3.28.3, ninja 1.11.1, clang-format 18.1.3, valgrind 3.22.0,
+numpy 2.2.6, scipy 1.15.3, matplotlib 3.10.3.
 
 ### T0.1 — Project skeleton `[ ]`
 Create the CMake project: `engine/` library target, `tests/` target, `third_party/`.

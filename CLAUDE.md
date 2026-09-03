@@ -61,7 +61,7 @@ Types: `feat` `fix` `test` `refactor` `docs` `build` `chore`.
 ## Audio and verification
 
 - **Never read audio files.** `.wav` is binary; it poisons context. Inspect audio only
-  through `python3 tools/analyze.py` — pitch track, cents error, and a spectrogram PNG,
+  through `.venv/bin/python tools/analyze.py` — pitch track, cents error, and a spectrogram PNG,
   which you can view. You cannot hear; the owner does the listening.
 - **Never claim a test passes without pasting the `ctest` summary line.** Never claim
   audio is correct without a number. Constitution VII.
@@ -94,4 +94,5 @@ Types: `feat` `fix` `test` `refactor` `docs` `build` `chore`.
 
 ```bash
 git config core.hooksPath .githooks   # REQUIRED - identity guards are inert without it
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt   # analysis tooling
 ```
