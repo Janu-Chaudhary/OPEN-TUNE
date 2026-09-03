@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# OpenTune identity guard. See constitution.md IX.
+#
+# This repository is locked to a single GitHub identity. Another GitHub account
+# (janu-droid, key comment hello@chardi.ai) is the DEFAULT on this machine and
+# resolves from plain `github.com`. This hook exists so that default can never
+# silently attach itself to this project.
+
+set -euo pipefail
+
+ALLOWED_EMAIL="januchaudhary2004@gmail.com"
+ALLOWED_NAME="Janu-Chaudhary"
+SSH_ALIAS="github-januchaudhary"
+
+fail() { printf '\n\033[31mBLOCKED by OpenTune identity guard\033[0m\n%s\n\n' "$1" >&2; exit 1; }
+
+author_email="$(git config user.email || true)"
+author_name="$(git config user.name || true)"
+
+[ "$author_email" = "$ALLOWED_EMAIL" ] || fail \
+"Author email is '$author_email' but this repo only permits '$ALLOWED_EMAIL'.
+
+  Fix:  git config --local user.email \"$ALLOWED_EMAIL\""
+
+[ "$author_name" = "$ALLOWED_NAME" ] || fail \
+"Author name is '$author_name' but this repo only permits '$ALLOWED_NAME'.
+
+  Fix:  git config --local user.name \"$ALLOWED_NAME\""
+
+# Any remote on plain github.com would push as the WRONG account, regardless of
+# who authored the commits. Only the SSH alias reaches the correct identity.
+while read -r name url; do
+    [ -n "${url:-}" ] || continue
+    case "$url" in
+        *"$SSH_ALIAS"*) ;;
+        *github.com*|*github-droid*) fail \
+"Remote '$name' points at '$url'.
+
+Plain github.com authenticates as janu-droid (the wrong account).
+
+  Fix:  git remote set-url $name $SSH_ALIAS:<owner>/<repo>.git" ;;
+    esac
+done < <(git remote -v | awk '{print $1, $2}' | sort -u)
+
+exit 0
