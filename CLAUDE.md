@@ -12,6 +12,7 @@ The engine is the product; apps are hosts around it.
 cmake -B build -DCMAKE_BUILD_TYPE=Debug     # configure
 cmake --build build -j                       # build
 ctest --test-dir build --output-on-failure   # run tests
+cmake --build build --target format-check   # fails on unformatted code; run before commit
 ./build/tools/autotune-cli/opentune-cli in.wav out.wav --key C:major --strength 0.8
 ./build/tools/autotune-live/opentune-live    # real-time monitor (Stage 3+)
 ```

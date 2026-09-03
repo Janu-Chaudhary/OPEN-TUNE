@@ -35,6 +35,13 @@ Allowed: fixed-size arrays sized in `prepare()`, `std::atomic` loads/stores, ari
 UI → audio thread is one direction, via `std::atomic<float>` per parameter or a
 lock-free swap of a `Params` snapshot. Never a mutex. Never a callback.
 
+## Compiler flags are strict — expect casts
+
+`-Wconversion -Wsign-conversion -Wdouble-promotion` are errors. Every `double`→`float`,
+`size_t`→`int`, or `int`→`float` boundary needs an explicit `static_cast`. This is
+deliberate: implicit narrowing produces audio that is *slightly* wrong, which is the
+worst kind. Write the cast; don't loosen the flag.
+
 ## Numerics
 
 - Frequencies in Hz as `float`. Cents = `1200 * log2(f / ref)`.

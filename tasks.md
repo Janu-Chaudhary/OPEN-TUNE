@@ -25,7 +25,7 @@ They are dev tooling for `tools/analyze.py` only — never a runtime dependency 
 Verified 2026-09-04: cmake 3.28.3, ninja 1.11.1, clang-format 18.1.3, valgrind 3.22.0,
 numpy 2.2.6, scipy 1.15.3, matplotlib 3.10.3.
 
-### T0.1 — Project skeleton `[ ]`
+### T0.1 — Project skeleton `[x]`
 Create the CMake project: `engine/` library target, `tests/` target, `third_party/`.
 C++17, warnings as errors. Add the test framework.
 **Depends on:** nothing
