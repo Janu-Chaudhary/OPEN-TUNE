@@ -4,6 +4,7 @@ add_library(opentune STATIC
     src/Version.cpp
     src/ScaleQuantizer.cpp
     src/AutocorrelationDetector.cpp
+    src/ResampleCorrector.cpp
 )
 target_include_directories(opentune PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
