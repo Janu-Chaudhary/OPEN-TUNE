@@ -3,10 +3,11 @@
 Where everything lives and what it is for. If a document is not listed here, it
 either should be, or should not exist.
 
-## Governing documents (repo root)
+## Governing documents
 
 | Document | Purpose | Changes when |
 |---|---|---|
+| `docs/PRD.md` | Why the product exists, for whom, success metrics, roadmap, risks | A product decision changes; owner-approved |
 | `constitution.md` | Non-negotiable principles, with reasoning | Almost never; owner decision, recorded |
 | `specs.md` | What v1 is: requirements, interfaces, acceptance criteria, open questions | A requirement or scope decision changes; flagged first |
 | `tasks.md` | Ordered work with per-task done-criteria | Every task; living document |
@@ -45,7 +46,8 @@ either should be, or should not exist.
 
 ## Reading order for a newcomer
 
-1. `constitution.md` — the rules and why
-2. `specs.md` §1–§3, §7 — the problem and the shape of the answer
-3. `tasks.md` — where we are
-4. `docs/decisions/` — why things are the way they are
+1. `docs/PRD.md` — why this exists and for whom
+2. `constitution.md` — the rules and why
+3. `specs.md` §1–§3, §7 — the shape of the answer
+4. `tasks.md` — where we are
+5. `docs/decisions/` — why things are the way they are
