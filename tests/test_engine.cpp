@@ -1,41 +1,33 @@
-// Tests for opentune::Engine (T0.9).
+// Tests for opentune::Engine (T0.9, fix round 1).
 //
 // Engine wires PitchDetector -> ScaleQuantizer -> PitchCorrector together
 // (specs.md section 7, section 7.1): detect -> quantize -> compute ratio ->
-// clamp -> correct. This file covers the four "Done when" criteria from
-// .superpowers/sdd/tasks/task-T0.9-brief.md:
-//   1. A 445 Hz sine in produces roughly 440 Hz out.
-//   2. Silence in produces bit-identical silence out (FR2).
-//   3. Block boundaries introduce no discontinuity.
-//   4. A detected pitch an octave from the target yields a clamped ratio.
+// clamp -> correct.
 //
-// A note on criterion 4 (see the class comment on Engine::clampPitchRatio
-// in Engine.h, and the T0.9 report, for the full reasoning): with the
-// Stage 0 ScaleQuantizer, `snap(f)/f` is mathematically bounded to within
-// +/-50 cents (a half semitone, ratio ~0.971-1.029) for *any* positive f,
-// because it works by rounding to the *nearest* integer MIDI note in log
-// space -- rounding to nearest can never be more than half a step away.
-// That means the natural detect -> quantize -> ratio pipeline cannot
-// actually manufacture a ratio anywhere near 2.0 or 0.5 today, regardless
-// of how "octave-wrong" the detected frequency is: quantizing a wrong
-// frequency to its own nearest semitone is still self-consistent and
-// nearly a no-op ratio-wise. FR15's clamp is still implemented as specified
-// (it is cheap insurance against a misbehaving detector, a future sparser
-// scale, or numerical edge cases -- see Engine.cpp), and is tested directly
-// below via its exposed static helper, exactly as the brief instructs
-// ("test the clamp directly ... do not rely on provoking a real detector
-// error") -- just not by routing an extreme ratio through the present
-// ScaleQuantizer, which cannot currently produce one.
+// A note on FR15 (see docs/decisions/0004 for the full corrected history):
+// the Stage 0 ScaleQuantizer's nearest-semitone rounding mathematically
+// bounds `snap(f)/f` to within +/-50 cents for any positive f, so the
+// natural detect -> quantize -> ratio pipeline cannot currently produce a
+// ratio anywhere near FR15's clamp bound, regardless of how "wrong" a
+// detected frequency is. The clamp itself lives in Engine.cpp as an
+// implementation detail (not part of Engine's public surface) and is
+// exercised below indirectly, via a PitchCorrector test double that
+// records the ratio Engine::process() actually sent it -- proving the
+// ratio computed by the real pipeline is delivered to the corrector
+// unaltered (clamp is a documented no-op today), not that the clamp can be
+// made to visibly engage.
 #include "doctest.h"
 #include "opentune/AutocorrelationDetector.h"
 #include "opentune/Engine.h"
 #include "opentune/Params.h"
+#include "opentune/PitchCorrector.h"
 #include "opentune/PitchDetector.h"
 #include "opentune/ResampleCorrector.h"
 #include "opentune/ScaleQuantizer.h"
 
 #include "support/Signals.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <utility>
@@ -62,6 +54,22 @@ double zeroCrossingFrequency(const std::vector<float>& signal, double sampleRate
     return static_cast<double>(crossings) / durationSeconds;
 }
 
+// True when every sample in signal[blockStart, blockStart + blockSize) is
+// bit-identical to the first. This is the shape ResampleCorrector's
+// documented "hold the last available sample" degeneration takes once its
+// read position has outrun (ratio > 1.0) or fallen behind (ratio < 1.0,
+// exhausting its bounded history) the input it has actually been given --
+// see tasks.md D5 and finding 4 of task-T0.9-findings-r1.md.
+bool isConstantBlock(const std::vector<float>& signal, std::size_t blockStart,
+                     std::size_t blockSize) {
+    for (std::size_t i = blockStart; i < blockStart + blockSize; ++i) {
+        if (signal[i] != signal[blockStart]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // A detector that ignores its input entirely and always reports a fixed
 // estimate, regardless of how many samples it has seen or how the caller
 // chunks them into blocks. Used to isolate a test to Engine's own
@@ -83,9 +91,45 @@ private:
     opentune::PitchEstimate m_estimate;
 };
 
+// A pass-through corrector that records the last `pitchRatio` and block
+// size it was given, and how many times process() was called. Used to
+// observe -- "in situ", per finding 6 of task-T0.9-findings-r1.md -- what
+// ratio Engine::process() actually hands the corrector, without needing to
+// expose Engine's internal clamp function as part of its public API.
+class StubPitchCorrector final : public opentune::PitchCorrector {
+public:
+    explicit StubPitchCorrector(int latencySamples = 0) : m_latencySamples(latencySamples) {}
+
+    void prepare(double /*sampleRate*/, int /*maxBlockSize*/) override {}
+    void reset() noexcept override {
+        callCount = 0;
+        lastRatio = 0.0f;
+        lastN = 0;
+    }
+
+    void process(const float* in, float* out, int n, float pitchRatio) noexcept override {
+        for (int i = 0; i < n; ++i) {
+            out[static_cast<std::size_t>(i)] = in[static_cast<std::size_t>(i)];
+        }
+        lastRatio = pitchRatio;
+        lastN = n;
+        ++callCount;
+    }
+
+    int latencySamples() const noexcept override { return m_latencySamples; }
+
+    int callCount = 0;
+    float lastRatio = 0.0f;
+    int lastN = 0;
+
+private:
+    int m_latencySamples;
+};
+
 } // namespace
 
-TEST_CASE("Engine: a 445 Hz sine in produces roughly 440 Hz out") {
+TEST_CASE("Engine: a 445 Hz sine in is measurably corrected toward 440 Hz, "
+          "unlike the uncorrected input") {
     opentune::AutocorrelationDetector detector;
     opentune::ScaleQuantizer quantizer({0, opentune::ScaleType::Chromatic});
     opentune::ResampleCorrector corrector;
@@ -100,9 +144,14 @@ TEST_CASE("Engine: a 445 Hz sine in produces roughly 440 Hz out") {
     engine.reset();
 
     // Long enough to run well past AutocorrelationDetector's warm-up window
-    // (~2200 samples at 48 kHz -- see AutocorrelationDetector.cpp) and
-    // leave a large steady-state tail to measure a frequency from.
-    constexpr int kTotalSamples = 12000;
+    // (~2200 samples at 48 kHz) and leave a full-second steady-state tail
+    // to measure a frequency from -- but comfortably short of the ~4.84 s
+    // (roughly block 907) at which this exact scenario's ratio (0.9888,
+    // 445 Hz corrected toward 440 Hz) is known to make ResampleCorrector's
+    // bounded history exhaust and the output collapse into a block-rate
+    // staircase (tasks.md D5; finding 4 of task-T0.9-findings-r1.md).
+    // 150000 samples is 3.125 s, leaving ~1.7 s of margin before collapse.
+    constexpr int kTotalSamples = 150000;
     const std::vector<float> in = opentune::test::sine(445.0f, kSampleRate, kTotalSamples);
     std::vector<float> out(static_cast<std::size_t>(kTotalSamples), 0.0f);
 
@@ -113,20 +162,36 @@ TEST_CASE("Engine: a 445 Hz sine in produces roughly 440 Hz out") {
         offset += n;
     }
 
-    // Measure only the tail, well after the detector's ring buffer has
-    // filled and correction has settled to a steady ratio.
-    constexpr int kMeasureStart = 6000;
-    const std::vector<float> measured(out.begin() + kMeasureStart, out.end());
+    // Measure only a 1.25 s tail, well after the detector's ring buffer has
+    // filled and correction has settled to a steady ratio. A 1.25 s window
+    // gives the zero-crossing estimator ~0.8 Hz resolution (~3-4 cents at
+    // 440 Hz) -- comfortably tighter than the +/-20 cent tolerance below,
+    // unlike the original (0.125 s / 8 Hz / ~31 cent resolution) window,
+    // which could not distinguish corrected output from the untouched
+    // input (finding 1 of task-T0.9-findings-r1.md).
+    constexpr int kMeasureStart = 90000;
+    const std::vector<float> measuredOut(out.begin() + kMeasureStart, out.end());
+    const std::vector<float> measuredIn(in.begin() + kMeasureStart, in.end());
 
-    const double measuredHz = zeroCrossingFrequency(measured, kSampleRate);
-    const double cents = centsError(measuredHz, 440.0);
-    CAPTURE(measuredHz);
-    CAPTURE(cents);
-    // Generous tolerance: AutocorrelationDetector is itself only accurate
-    // to +/-20 cents (integer-lag quantization, see its header), and the
-    // naive linear-interpolation ResampleCorrector adds its own small
-    // error on top.
-    CHECK(std::abs(cents) <= 35.0);
+    const double outHz = zeroCrossingFrequency(measuredOut, kSampleRate);
+    const double inHz = zeroCrossingFrequency(measuredIn, kSampleRate);
+    const double outCents = centsError(outHz, 440.0);
+    const double inCents = centsError(inHz, 440.0);
+    CAPTURE(outHz);
+    CAPTURE(inHz);
+    CAPTURE(outCents);
+    CAPTURE(inCents);
+
+    // The corrected output must land close to 440 Hz...
+    CHECK(std::abs(outCents) <= 20.0);
+    // ...and -- the control assertion finding 1 asks for -- it must land
+    // measurably closer to 440 Hz than the same window of the *uncorrected*
+    // input signal does. The input is untouched 445 Hz (~19.6 cents sharp
+    // of 440); if Engine were not actually correcting anything (e.g. the
+    // corrector call were replaced with a passthrough copy), outCents would
+    // equal inCents and this assertion -- not just the tolerance above --
+    // would fail.
+    CHECK(std::abs(outCents) < std::abs(inCents));
 }
 
 TEST_CASE("Engine: silence in produces bit-identical silence out") {
@@ -150,11 +215,107 @@ TEST_CASE("Engine: silence in produces bit-identical silence out") {
 
     engine.process(in.data(), out.data(), kBlockSamples);
 
-    // FR2: unvoiced audio passes through *unmodified* -- exact equality,
-    // not merely "quiet", per the task brief.
+    // NOTE: this case alone does not prove FR2 -- ResampleCorrector also
+    // returns all zeros for all-zero input at any ratio (see
+    // tests/test_resample_corrector.cpp), so this assertion would hold even
+    // with the unvoiced bypass deleted. It is kept as the plain "silence
+    // in, silence out" sanity check engine/CLAUDE.md's "three tests
+    // minimum" asks for; the *unvoiced bypass* itself (FR2) is proven by
+    // the white-noise test below, which uses a non-zero signal a
+    // passthrough-shaped corrector cannot accidentally zero out.
     for (float sample : out) {
         CHECK(sample == 0.0f);
     }
+}
+
+TEST_CASE("Engine: FR2 -- unvoiced (non-silent) audio passes through bit-identically") {
+    // White noise, not silence: this has real, non-zero, non-repeating
+    // energy, so a bit-identical match can only come from the unvoiced
+    // bypass actually running (Engine.cpp's `!estimate.voiced` branch),
+    // never by accident the way an all-zero signal could. A stub detector
+    // fixes `voiced = false` regardless of the input's actual content --
+    // white noise has no pitch to detect anyway, but the point of this
+    // test is Engine's bypass logic, not AutocorrelationDetector's own
+    // (separately tested) voicing decision.
+    constexpr opentune::PitchEstimate kUnvoiced{0.0f, 0.0f, false};
+    StubPitchDetector detector(kUnvoiced);
+    opentune::ScaleQuantizer quantizer({0, opentune::ScaleType::Chromatic});
+    opentune::ResampleCorrector corrector;
+    opentune::Params params;
+
+    opentune::Engine engine(detector, quantizer, corrector, params);
+
+    constexpr int kBlockSamples = 256;
+    engine.prepare(kSampleRate, kBlockSamples);
+    engine.reset();
+
+    const std::vector<float> in = opentune::test::whiteNoise(kBlockSamples, /*seed=*/12345u);
+    std::vector<float> out(static_cast<std::size_t>(kBlockSamples), 0.0f);
+
+    engine.process(in.data(), out.data(), kBlockSamples);
+
+    // Exact equality: FR2 requires the signal to pass through *untouched*,
+    // not merely quiet or approximately similar.
+    REQUIRE(out.size() == in.size());
+    for (std::size_t i = 0; i < in.size(); ++i) {
+        CAPTURE(i);
+        CHECK(out[i] == in[i]);
+    }
+}
+
+TEST_CASE("Engine: process() delivers the quantize-derived ratio to the corrector") {
+    // Finding 3/6 of task-T0.9-findings-r1.md: verify, in situ, that the
+    // ratio Engine::process() computes (quantize -> compute ratio -> clamp)
+    // is exactly what reaches the corrector, using a recording
+    // PitchCorrector test double rather than exposing Engine's internal
+    // clamp function as part of its public API.
+    //
+    // 890 Hz stands in for "a detector reporting a pitch skewed toward the
+    // next octave" (docs/decisions/0003's documented high-leaning octave
+    // bias) rather than an exact scale tone, so the quantize step actually
+    // does something (890 -> 880, not an identity 880 -> 880). As
+    // documented in docs/decisions/0004 and the file header above, this
+    // ratio (880/890 ~= 0.9888) still lands well inside the clamp's bound
+    // -- the Stage 0 ScaleQuantizer cannot currently produce anything else
+    // -- so this test demonstrates correct *delivery* of the computed
+    // ratio, not the clamp visibly altering a value.
+    constexpr opentune::PitchEstimate kOctaveSkewedEstimate{890.0f, 1.0f, true};
+    StubPitchDetector detector(kOctaveSkewedEstimate);
+    opentune::ScaleQuantizer quantizer({0, opentune::ScaleType::Chromatic});
+    StubPitchCorrector corrector;
+    opentune::Params params;
+
+    opentune::Engine engine(detector, quantizer, corrector, params);
+
+    constexpr int kBlockSamples = 256;
+    engine.prepare(kSampleRate, kBlockSamples);
+    engine.reset();
+
+    const std::vector<float> in(static_cast<std::size_t>(kBlockSamples), 0.25f);
+    std::vector<float> out(static_cast<std::size_t>(kBlockSamples), 0.0f);
+    engine.process(in.data(), out.data(), kBlockSamples);
+
+    REQUIRE(corrector.callCount == 1);
+    CHECK(corrector.lastN == kBlockSamples);
+
+    const float expectedTargetHz = quantizer.snap(kOctaveSkewedEstimate.frequencyHz);
+    const float expectedRatio = expectedTargetHz / kOctaveSkewedEstimate.frequencyHz;
+    CAPTURE(expectedTargetHz);
+    CAPTURE(expectedRatio);
+    CHECK(corrector.lastRatio == doctest::Approx(expectedRatio));
+}
+
+TEST_CASE("Engine: latencySamples() forwards the injected corrector's latency") {
+    constexpr opentune::PitchEstimate kUnvoiced{0.0f, 0.0f, false};
+    StubPitchDetector detector(kUnvoiced);
+    opentune::ScaleQuantizer quantizer({0, opentune::ScaleType::Chromatic});
+    StubPitchCorrector corrector(/*latencySamples=*/1234);
+    opentune::Params params;
+
+    opentune::Engine engine(detector, quantizer, corrector, params);
+    engine.prepare(kSampleRate, 256);
+
+    CHECK(engine.latencySamples() == 1234);
 }
 
 TEST_CASE("Engine: same input via different block sizes gives the same output") {
@@ -206,36 +367,66 @@ TEST_CASE("Engine: same input via different block sizes gives the same output") 
     }
 }
 
-TEST_CASE("Engine: FR15 clamp bounds an extreme pitch ratio, as an octave "
-          "detection error would imply, rather than passing it through") {
-    // Directly exercises the clamp (FR15) with the exact values a
-    // detection octave error implies (specs.md section 7.1: "an octave
-    // error produces a ratio near 2.0 or 0.5") -- per the file header
-    // comment above, the *current* ScaleQuantizer cannot actually route
-    // such a ratio through the full detect->quantize->correct pipeline
-    // (its nearest-semitone quantization mathematically bounds
-    // target/detected to +/-50 cents for any input), so this tests the
-    // clamp function FR15 requires directly, as the task brief instructs.
-    CHECK(opentune::Engine::clampPitchRatio(2.0f) ==
-          doctest::Approx(opentune::Engine::kMaxPitchRatio));
-    CHECK(opentune::Engine::clampPitchRatio(0.5f) ==
-          doctest::Approx(opentune::Engine::kMinPitchRatio));
+TEST_CASE("Engine: KNOWN LIMITATION (tasks.md D5) -- a ratio > 1.0 correction "
+          "(flat input) degenerates into a block-rate staircase after ~0.68 s") {
+    // Finding 4 of task-T0.9-findings-r1.md: every other test in this file
+    // corrects *downward* (ratio < 1.0). This test documents, rather than
+    // avoids, the other half of ResampleCorrector's known bad behaviour
+    // (T0.7's deliberate naive implementation, not a T0.9 defect -- the
+    // remedy is being decided by ResampleCorrector's owner, tracked as
+    // tasks.md D5): above ratio 1.0, ResampleCorrector's read position
+    // outruns the input it has actually been given and it falls back to
+    // holding (repeating) its last available sample once it runs out.
+    //
+    // A detector fixed at 435 Hz is a semitone-ish flat of A4; the
+    // chromatic quantizer snaps it up to 440 Hz, giving ratio 440/435 ~=
+    // 1.0115 -- controller-measured (task-T0.9-findings-r1.md finding 4) to
+    // produce its first fully block-constant output block at block index
+    // 128 (sample 32768, ~0.68 s at 48 kHz/256-sample blocks), with the
+    // held value at full scale (peak ~0.5) rather than silence.
+    constexpr opentune::PitchEstimate kFlatEstimate{435.0f, 1.0f, true};
+    StubPitchDetector detector(kFlatEstimate);
+    opentune::ScaleQuantizer quantizer({0, opentune::ScaleType::Chromatic});
+    opentune::ResampleCorrector corrector;
+    opentune::Params params;
 
-    // An octave and a half low/high: still clamped, not merely nudged.
-    CHECK(opentune::Engine::clampPitchRatio(3.0f) ==
-          doctest::Approx(opentune::Engine::kMaxPitchRatio));
-    CHECK(opentune::Engine::clampPitchRatio(0.25f) ==
-          doctest::Approx(opentune::Engine::kMinPitchRatio));
+    opentune::Engine engine(detector, quantizer, corrector, params);
 
-    // A legitimate small correction (well inside the clamp's musical
-    // range) must pass through unchanged -- the clamp must not distort
-    // ordinary corrections.
-    CHECK(opentune::Engine::clampPitchRatio(1.02f) == doctest::Approx(1.02f));
-    CHECK(opentune::Engine::clampPitchRatio(1.0f) == doctest::Approx(1.0f));
+    constexpr int kBlockSize = 256;
+    engine.prepare(kSampleRate, kBlockSize);
+    engine.reset();
 
-    // Exactly at the bound: unchanged (inclusive clamp).
-    CHECK(opentune::Engine::clampPitchRatio(opentune::Engine::kMaxPitchRatio) ==
-          doctest::Approx(opentune::Engine::kMaxPitchRatio));
+    // Run well past the documented collapse point (block 128) so both the
+    // healthy region beforehand and the degenerate region afterward are
+    // observed in one run.
+    constexpr int kNumBlocks = 200;
+    constexpr int kTotalSamples = kNumBlocks * kBlockSize;
+    const std::vector<float> in = opentune::test::sine(435.0f, kSampleRate, kTotalSamples);
+    std::vector<float> out(static_cast<std::size_t>(kTotalSamples), 0.0f);
+
+    for (int block = 0; block < kNumBlocks; ++block) {
+        const std::size_t offset = static_cast<std::size_t>(block) * kBlockSize;
+        engine.process(in.data() + offset, out.data() + offset, kBlockSize);
+    }
+
+    // Before collapse (well clear of block 128, with margin): a real,
+    // still-varying corrected waveform -- not yet degenerate.
+    constexpr std::size_t kHealthyBlock = 50;
+    CHECK_FALSE(isConstantBlock(out, kHealthyBlock * kBlockSize, kBlockSize));
+
+    // After collapse (with margin past the documented block 128): the
+    // known-bad, pinned behaviour -- a fully constant-valued block...
+    constexpr std::size_t kDegenerateBlock = 150;
+    const std::size_t degenerateStart = kDegenerateBlock * kBlockSize;
+    CHECK(isConstantBlock(out, degenerateStart, kBlockSize));
+
+    // ...held at full scale, not silence -- the specific, surprising
+    // failure mode this test exists to pin down (a naive "hold the last
+    // sample" bug that degrades to silence would be far less alarming than
+    // one that degrades to a loud, block-rate square-wave-like staircase).
+    const float heldValue = out[degenerateStart];
+    CAPTURE(heldValue);
+    CHECK(std::abs(heldValue) > 0.4f);
 }
 
 // constitution II / engine/CLAUDE.md: process(), reset(), and
@@ -248,5 +439,3 @@ static_assert(noexcept(std::declval<opentune::Engine&>().reset()),
               "Engine::reset must be noexcept (audio thread, constitution II)");
 static_assert(noexcept(std::declval<const opentune::Engine&>().latencySamples()),
               "Engine::latencySamples must be noexcept (audio thread, constitution II)");
-static_assert(noexcept(opentune::Engine::clampPitchRatio(1.0f)),
-              "Engine::clampPitchRatio must be noexcept (called from process(), audio thread)");

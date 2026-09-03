@@ -49,6 +49,18 @@ public:
     // (see ScaleQuantizer.h), so there is nothing for it to size or
     // allocate. May allocate (constitution II) -- never called from the
     // audio thread while streaming.
+    //
+    // Also pushes `m_params.scale` into the injected `ScaleQuantizer` (see
+    // Engine.cpp), making Params the single source of truth for which
+    // scale is active. Two undocumented consequences worth knowing before
+    // wiring up a host: (1) the injected ScaleQuantizer is not owned by
+    // this Engine -- if two Engines are ever constructed sharing the *same*
+    // ScaleQuantizer instance, each one's prepare() clobbers the other's
+    // scale; give each Engine its own ScaleQuantizer. (2) there is
+    // currently no way to change the scale *after* prepare() without
+    // calling prepare() again (which also re-prepares the detector and
+    // corrector, discarding their buffered state) -- a lock-free
+    // "change scale live" path is FR10/FR5 territory, not yet built.
     void prepare(double sampleRate, int maxBlockSize);
 
     // Resets the detector's and corrector's internal state back to their
@@ -71,10 +83,12 @@ public:
     //   4. compute ratio -- targetHz / detectedHz: how much to multiply
     //      pitch by to move from what was sung to what should have been
     //      sung.
-    //   5. clamp -- see the kMinPitchRatio/kMaxPitchRatio comment in the
-    //      .cpp for the exact bound and why (FR15). This is the step that
-    //      keeps a detector's occasional octave error (ratio near 2.0 or
-    //      0.5) from ever reaching the corrector.
+    //   5. clamp -- see the FR15 clamp comment in the .cpp for the exact
+    //      bound and what it actually guards against today (an internal
+    //      implementation detail, not part of this class's public
+    //      contract -- see docs/decisions/0004 for why a ratio anywhere
+    //      near a full octave cannot currently arise from this pipeline at
+    //      all, and what the clamp is a backstop against instead).
     //   6. correct -- hand the clamped ratio to the PitchCorrector, which
     //      writes the shifted signal to `out`.
     //
@@ -98,37 +112,16 @@ public:
     // a value fixed by `prepare()`, not one that changes per block.
     int latencySamples() const noexcept;
 
-    // FR15 -- clamps a raw pitch ratio (targetHz / detectedHz) to the
-    // musical range this engine treats as a legitimate *correction*. See
-    // the .cpp for the exact bound and its musical justification.
-    //
-    // Public and static -- unlike the rest of Engine's behaviour, which is
-    // only observable by driving the whole detect->quantize->correct
-    // pipeline through process() -- because this one piece of FR15's logic
-    // is a pure function of a single float with no Engine state involved,
-    // and the task brief specifically requires testing the clamp
-    // *directly*, "with a stub detector returning a deliberately
-    // octave-wrong estimate," rather than only through whatever ratio the
-    // current ScaleQuantizer happens to be able to produce. See Engine.cpp
-    // and tests/test_engine.cpp for why that distinction matters here: the
-    // Stage 0 ScaleQuantizer's nearest-semitone quantization is
-    // mathematically bounded to +/-50 cents of its input for any
-    // frequency, so `snap(f)/f` alone can never actually reach a ratio
-    // anywhere near this clamp's bound today -- this function is FR15's
-    // defensive backstop regardless (against a misbehaving PitchDetector, a
-    // future sparser scale, or a numerical edge case), and this is how it
-    // is exercised directly.
-    //
-    // Real-time safe (noexcept): called once per voiced block from
-    // process(), on the audio thread.
-    static float clampPitchRatio(float rawRatio) noexcept;
-
-    // The musical range `clampPitchRatio` enforces. See Engine.cpp for the
-    // derivation (+/-2 semitones) and reasoning.
-    static constexpr float kMinPitchRatio = 0.890898718f;
-    static constexpr float kMaxPitchRatio = 1.122462048f;
-
 private:
+    // FR15's clamp (the bound, and the function that applies it) is an
+    // implementation detail of process() and deliberately not part of this
+    // class's public surface -- see the anonymous namespace in Engine.cpp.
+    // Making the exact numeric bound part of the public API would turn
+    // widening it (e.g. for Stage 5's sparser scales) into a public-API
+    // change instead of an internal one. It is exercised indirectly, via
+    // process(), in tests/test_engine.cpp using a corrector test double
+    // that records the ratio it was actually given.
+
     PitchDetector& m_detector;
     ScaleQuantizer& m_quantizer;
     PitchCorrector& m_corrector;

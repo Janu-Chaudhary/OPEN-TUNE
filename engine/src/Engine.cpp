@@ -9,19 +9,37 @@ namespace {
 
 // --- FR15 clamp bound, derivation --------------------------------------
 //
-// This clamp exists to stop a detection error from ever reaching a
-// PitchCorrector as a wild ratio (specs.md section 7.1, FR15): the task
-// brief that motivated this file documents two independent facts that
-// compose into a real failure if this clamp is missing --
-//   1. ResampleCorrector (the naive Stage 0 corrector) starves above
-//      ratio 1.0: producing n output samples at ratio r needs r*n input
-//      samples, but a real-time block only ever hands it n, so past
-//      ratio 1.0 it falls back to holding its last sample and the result
-//      becomes block-size dependent (see ResampleCorrector.h).
-//   2. AutocorrelationDetector's octave errors lean high, not low (see
-//      docs/decisions/0003-first-peak-autocorrelation.md).
-// A ratio anywhere near 2.0 (an octave) is exactly where (1) is weakest,
-// so it must never be allowed to reach the corrector.
+// What this clamp actually guards, today (see docs/decisions/0004 for the
+// corrected history -- an earlier draft of this comment argued from a
+// scenario that turned out not to be reachable; that reasoning was wrong,
+// and is kept only as a cross-reference there, not repeated here):
+//
+//   - The Stage 0 ScaleQuantizer's nearest-semitone rounding mathematically
+//     bounds every ratio *this* pipeline can currently produce to +/-50
+//     cents (ratio ~0.9715-1.0293, verified both analytically and by a
+//     numerical sweep -- see docs/decisions/0004 and docs/lessons.md).
+//     This clamp's bound is well outside that range, so **it does not bind
+//     today**: for Stage 0, it is inert insurance, not an active guard.
+//   - Stage 5's gapped scales change that: HarmonicMinor and Pentatonic
+//     have 3-semitone gaps between some allowed notes, so their worst-case
+//     nearest-note distance is 1.5 semitones (ratio 2^(1.5/12) ~= 1.0905)
+//     -- inside this clamp's +/-2-semitone bound, with margin, but no
+//     longer negligible against it the way Stage 0's 50 cents is.
+//   - Stage 4's `retuneMs` introduces a target that glides toward (rather
+//     than snapping instantly to) the quantized pitch, and -- more
+//     importantly for this clamp -- introduces the possibility of a target
+//     computed from a *different* block's detected pitch than the one the
+//     ratio is currently being applied to, once smoothing carries state
+//     across blocks. That reintroduces exactly the "stale target vs. a
+//     since-changed detected pitch" gap this clamp is built to catch,
+//     which Stage 0's single-block, always-fresh computation does not
+//     create.
+//   - A misbehaving PitchDetector (a future implementation with a bug, or
+//     one that does not respect the declared 65-1100 Hz range) is not
+//     bounded by any of the above reasoning at all -- FR15 is written
+//     as a property of the Engine, not of "whichever detector currently
+//     exists," and this clamp is what makes that property actually hold
+//     regardless of which PitchDetector is injected.
 //
 // The bound chosen here is +/-2 semitones (in equal temperament, one
 // semitone is a frequency ratio of 2^(1/12) ~= 1.0595):
@@ -30,43 +48,44 @@ namespace {
 //
 // Musical reasoning: a *pitch corrector*'s job is to nudge a performance
 // that is already close to the intended note, not to reinterpret which
-// note was sung. A singer landing within a semitone or two of their
-// target is a normal (if quite imprecise) real performance worth
-// correcting; a detected pitch a full octave (12 semitones, ratio 2.0)
-// from the target is not a performance to correct at all -- it is a
-// detection error (or a wildly wrong note), and a corrector cannot fix a
-// wrong note by resampling, only mangle it further. Two semitones gives
-// comfortable headroom over the largest correction the Stage 0
-// ScaleQuantizer can ever actually request (see the class comment on
-// Engine::clampPitchRatio in Engine.h: its nearest-semitone rounding
-// mathematically bounds every real correction to +/-50 cents, a quarter
-// of this clamp's width) while remaining an order of magnitude away from
-// the octave-scale ratios that are actually dangerous for the corrector.
-// It is also comfortably inside the "roughly 0.94-1.06" range the task
-// brief itself cites as typical of real correction ratios.
+// note was sung. A singer landing within a semitone or two of their target
+// is a normal (if quite imprecise) real performance worth correcting; a
+// detected pitch a full octave (12 semitones, ratio 2.0) from the target
+// is not a performance to correct at all -- it is a detection error (or a
+// wildly wrong note), and a corrector cannot fix a wrong note by
+// resampling, only mangle it further (ResampleCorrector.h documents
+// exactly this: it starves above ratio 1.0 and exhausts its bounded
+// history buffer below it, so neither direction is safe far from unity).
+// Two semitones clears Stage 5's worst gapped-scale case (1.5 semitones,
+// 1.0905) with real margin, while remaining an order of magnitude away
+// from the octave-scale ratios that are actually dangerous for the
+// corrector, and sits comfortably inside the "roughly 0.94-1.06" range the
+// task brief itself cites as typical of real correction ratios.
 //
-// (The two constants live on Engine itself, in Engine.h, as
-// kMinPitchRatio/kMaxPitchRatio -- computed offline as 2^(+/-2/12) rather
-// than with a runtime std::pow call here, since they are compile-time
-// constants and this is a one-time, well-known derivation, not something
-// that needs to be recomputed or kept "live" against a semitone count.)
+// Private to this translation unit (an anonymous-namespace free function,
+// not an Engine member): the exact numeric bound is an implementation
+// detail, not part of Engine's public contract, so widening it later (e.g.
+// once Stage 5 lands) is an internal change, not a public-API break. It is
+// exercised indirectly through Engine::process() in
+// tests/test_engine.cpp, using a PitchCorrector test double that records
+// the ratio it was actually given.
+constexpr float kMinPitchRatio = 0.890898718f;
+constexpr float kMaxPitchRatio = 1.122462048f;
+
+float clampPitchRatio(float rawRatio) noexcept {
+    return std::clamp(rawRatio, kMinPitchRatio, kMaxPitchRatio);
+}
 
 } // namespace
 
-// Defined here (rather than only declared in the header) because a
-// constexpr static data member used only by odr-unevaluated contexts
-// (doctest's Approx comparisons in tests/test_engine.cpp take it by
-// reference) needs an out-of-class definition pre-C++17 semantics; with
-// C++17 inline implicit linkage this is technically optional, but is kept
-// explicit for clarity and to avoid relying on that (constitution:
-// C++17, but no need to lean on its more obscure corners).
-constexpr float Engine::kMinPitchRatio;
-constexpr float Engine::kMaxPitchRatio;
-
 Engine::Engine(PitchDetector& detector, ScaleQuantizer& quantizer, PitchCorrector& corrector,
                Params params)
-    : m_detector(detector), m_quantizer(quantizer), m_corrector(corrector),
-      m_params(std::move(params)) {}
+    : m_detector(detector), m_quantizer(quantizer), m_corrector(corrector), m_params(params) {
+    // `params` is copied, not moved: Params is a small, trivially-copyable
+    // struct (see the static_assert in tests/test_params.cpp) with nothing
+    // for a move to meaningfully steal, so std::move here would just
+    // dress up a copy as a move that cannot happen.
+}
 
 void Engine::prepare(double sampleRate, int maxBlockSize) {
     m_detector.prepare(sampleRate, maxBlockSize);
@@ -76,7 +95,9 @@ void Engine::prepare(double sampleRate, int maxBlockSize) {
     // (specs.md section 7.1's Params.h doc); push it into the quantizer
     // here so a caller cannot accidentally leave the injected
     // ScaleQuantizer configured with a different scale than the Params it
-    // also handed the Engine.
+    // also handed the Engine. See the prepare() doc comment in Engine.h
+    // for the two consequences this implies (shared-quantizer clobbering,
+    // and no live scale change yet).
     m_quantizer.setScale(m_params.scale);
 }
 
@@ -124,7 +145,9 @@ void Engine::process(const float* in, float* out, int n) noexcept {
     // be) at estimate.frequencyHz; the desired output is targetHz.
     const float rawRatio = targetHz / estimate.frequencyHz;
 
-    // Clamp (FR15) before the corrector ever sees this ratio.
+    // Clamp (FR15) before the corrector ever sees this ratio. See the
+    // anonymous namespace above for what this bound is and what it
+    // currently does (and does not) guard against.
     const float ratio = clampPitchRatio(rawRatio);
 
     // Correct: shift `in` to `out` by the clamped ratio. `strength` is not
@@ -139,10 +162,6 @@ int Engine::latencySamples() const noexcept {
     // ever looks at samples already received. So the engine's total
     // output delay is exactly whatever the corrector reports.
     return m_corrector.latencySamples();
-}
-
-float Engine::clampPitchRatio(float rawRatio) noexcept {
-    return std::clamp(rawRatio, kMinPitchRatio, kMaxPitchRatio);
 }
 
 } // namespace opentune
