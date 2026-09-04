@@ -133,6 +133,25 @@ upstream by the reviewer. `WavFile.h` is host code in `namespace opentune::host`
 under `engine/` references it (constitution IV). Vendored header is a `SYSTEM` include so
 strict warnings still apply to our own code — confirmed, not assumed.
 
+### T0.13 — Vendor Signalsmith Stretch `[ ]`
+`third_party/signalsmith-stretch/` plus its `signalsmith-linear` dependency, both MIT and
+both verified from their own licence text. Unmodified, with `LICENSE.txt` and `VENDORED.md`.
+**Depends on:** T0.1 · **Approved:** owner, 2026-09-04 (`docs/decisions/0005`)
+**Done when:** the header compiles into a test target under the project's strict warning
+flags (vendored code as a `SYSTEM` include, as dr_wav is), and a trivial round trip through
+it produces audio.
+
+### T0.14 — `SignalsmithCorrector` `[ ]`
+The real corrector, behind the existing `PitchCorrector` interface. Pulled forward from
+Stage 2 (T2.2) because `ResampleCorrector` cannot sustain any ratio ≠ 1.0 — see D5 and
+`docs/decisions/0005`. `ResampleCorrector` stays as the naive baseline for A/B work.
+**Depends on:** T0.6, T0.13
+**Done when:** a 440 Hz sine at ratio 1.0595 (one semitone up) produces 466.16 Hz ±20 cents,
+sustained over **at least 10 seconds** of audio — the duration is the point, since that is
+exactly what the naive corrector cannot do; block-size invariance holds; and `prepare()`
+performs all allocation, with `process()` demonstrated allocation-free rather than asserted
+to be (constitution II — the header uses `std::vector`, `std::function` and `std::random`).
+
 ### T0.11 — CLI tool `[ ]`
 `opentune-cli in.wav out.wav [--key C:major] [--strength 0.8]`.
 Feeds the file to the engine in 256-sample blocks — the same call pattern a real-time
@@ -173,8 +192,8 @@ That list is the agenda for Stages 1 and 2.
 ## Stage 2 — Correct pitch properly
 *Goal: meet AC3 and pass the listening checklist. The big quality jump.*
 
-- [ ] **T2.1** — Vendor Signalsmith Stretch *(requires approval)*
-- [ ] **T2.2** — `SignalsmithCorrector` behind the existing interface
+- [x] **T2.1** — Vendor Signalsmith Stretch — *pulled forward into Stage 0 as T0.13*
+- [x] **T2.2** — `SignalsmithCorrector` — *pulled forward into Stage 0 as T0.14*
 - [ ] **T2.3** — Verify accuracy (AC3) against the naive corrector as a baseline
 - [ ] **T2.4** — Enable formant preservation; confirm the chipmunk effect is gone
 - [ ] **T2.5** — Latency accounting via `latencySamples()`
@@ -273,8 +292,9 @@ That list is the agenda for Stages 1 and 2.
   `ResampleCorrector.h` documents both mechanisms. **Blocks the Stage 0 checkpoint:** the
   owner would be listening for chipmunk artifacts in a file that turns into a buzzing
   staircase after a few seconds.
-  Needs an owner decision: accept and document; wrap the read position (fixes the starve,
-  leaves the drift — half a fix); or pull Stage 2's real corrector forward.
+  **Resolved 2026-09-04:** owner approved pulling Stage 2's corrector forward (T0.13, T0.14,
+  `docs/decisions/0005`). `ResampleCorrector` is kept as the naive baseline with this
+  limitation pinned by a test, not deleted.
   Source: T0.9 review probe, controller-verified.
 
 *Seven further minor review findings are held in `.superpowers/sdd/tasks/progress.md`

@@ -10,6 +10,7 @@ add_executable(opentune_tests
     test_autocorrelation_detector.cpp
     test_resample_corrector.cpp
     test_engine.cpp
+    test_signalsmith_corrector.cpp
     test_wav_file.cpp
 )
 target_include_directories(opentune_tests PRIVATE

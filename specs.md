@@ -160,7 +160,8 @@ public:
     virtual int  latencySamples() const noexcept = 0;
 };
 ```
-Implementations: `ResampleCorrector` (naive, Stage 0), `SignalsmithCorrector` (Stage 2).
+Implementations: `ResampleCorrector` (naive baseline, Stage 0), `SignalsmithCorrector`
+(Stage 0 — pulled forward from Stage 2, see `docs/decisions/0005`).
 
 **`engine/include/opentune/Params.h`**
 ```cpp
@@ -255,7 +256,7 @@ That is the whole product working. If it does not happen, v1 is not done.
 |---|---|---|
 | 0 | CLI + naive detector + naive corrector | The pipeline is alive and audible |
 | 1 | YIN pitch detection | Detection is accurate (AC1, AC2, AC7) |
-| 2 | Signalsmith Stretch corrector, formants | Quality (AC3, listening pass) |
+| 2 | Formants, latency accounting, A/B against the naive baseline | Quality (AC3, listening pass) |
 | 3 | Real-time host via miniaudio | Latency and stability (AC4, AC5, AC9) |
 | 4 | Full parameter set — strength, retune, humanize | The dial (G2, FR7–FR10) |
 | 5 | Key selection, then auto-detection | FR5, FR6 |
@@ -268,13 +269,15 @@ Each stage ends in something audible. Stage 0 is measured in days.
 
 All permissive. All vendored into `third_party/`. Verified 2026-09-03.
 Owner-approved: doctest (2026-09-04, see `docs/decisions/0001`), dr_wav (2026-09-04, see
-`docs/decisions/0002`). Signalsmith Stretch and miniaudio are **not yet approved** — each
+`docs/decisions/0002`), Signalsmith Stretch **and its `signalsmith-linear` dependency**
+(2026-09-04, see `docs/decisions/0005`). miniaudio is **not yet approved** — it
 needs its own approval at Stage 2 and Stage 3 respectively (constitution I).
 
 | Library | Licence | Used for | Stage |
 |---|---|---|---|
 | dr_wav | Public domain / MIT-0 | WAV read/write in the CLI | 0 |
-| Signalsmith Stretch | MIT | Pitch shifting with formant handling | 2 |
+| Signalsmith Stretch | MIT (verified from licence text) | Pitch shifting with formant handling | 0 (was 2) |
+| signalsmith-linear | MIT (verified from licence text) | STFT, pulled in by Signalsmith Stretch | 0 |
 | miniaudio | Public domain / MIT-0 | Cross-platform audio I/O | 3 |
 | doctest | MIT | Test framework | 0 | 
 

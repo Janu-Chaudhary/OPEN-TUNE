@@ -30,6 +30,7 @@ either should be, or should not exist.
 | 0002 | dr_wav for WAV file I/O |
 | 0003 | First-peak rather than global-max lag selection (inverts the octave bias — bears on AC7) |
 | 0004 | Clamp the pitch ratio in the Engine, not the corrector (FR15 — the detector/corrector seam) |
+| 0005 | Vendor Signalsmith Stretch and pull the real corrector into Stage 0 (resolves D5) |
 
 ## Guards
 
