@@ -381,11 +381,42 @@ without incident: see §12.3.
 
 ### 12.2 `ref08_shabnam_dilcheezhaikya.wav` — accompaniment/reverb re-check
 
-**The controller's measurement:** a gap/loud RMS ratio of 0.092, against
-0.006–0.051 for every other file in this set — high enough to suggest residual
-accompaniment or a reverb tail surviving under the phrases, since a clean
-solo-vocal recording should have a much quieter gap than a passage with
-something (even quietly) sounding underneath it.
+**RESOLVED 2026-09-04. The controller's flag was wrong, and this section
+records why — the metric was invalid, not merely different.**
+
+The original claim was a gap/loud RMS ratio of 0.092 (p10/p90 of frame RMS over
+4096-sample frames) against 0.006–0.051 elsewhere, read as residual
+accompaniment. That number reproduces exactly on both decodes, so it was not a
+decode artifact. The metric itself is the problem: run on the owner's own clean
+phone recording, `take04.wav` scores **0.2887** — three times "worse" than the
+file it was used to condemn. It measures *how much silence a recording
+contains*, not whether anything is playing underneath. A near-continuous vocal
+scores high; a recording with long gaps scores low. It cannot detect
+accompaniment at all.
+
+**The proper test, and its result.** A female voice at 414 Hz median produces
+almost no energy below 150 Hz; a bass instrument playing under the phrases
+would. Measuring the quietest 10% of frames — residual energy, and how much of
+it is low-frequency:
+
+| File | Energy in gaps (vs loud p90) | Share below 150 Hz |
+|---|---|---|
+| `ref02_navjot_khat.wav` (clean) | 0.0019 | 20.3% |
+| `ref05_vidhisha_...wav` | 0.0046 | 19.3% |
+| **`ref08_shabnam_...wav`** | **0.0468** | **4.8%** |
+| `take04.wav` (owner, clean) | 0.2233 | 3.4% |
+
+ref08 does carry 10–25× more energy between phrases than the clean references,
+so *something* survives the gaps — but only 4.8% of it is low-frequency. There
+is **no bass instrument**. The signature is a **reverb tail**: a wet vocal whose
+decay outlasts each phrase.
+
+That matters for pitch detection, but far less than polyphony would: reverb
+smears periodicity rather than adding a competing pitch. It is consistent with
+this file's independently-measured low 3-way estimator agreement (§9) — the same
+smearing, seen from the label side.
+
+**Use ref08, but know it is the wettest file here.** It is not disqualified.
 
 **My re-check disagrees with that number.** Using the same 5th/95th-percentile
 frame-RMS metric `label_f0.py` itself computes for its voicing gate (2048-sample

@@ -171,3 +171,15 @@ same limit in another. The correction also arrived with a wrong mechanism attach
 was a time-alignment error, which re-running the bins at both offsets disproved in one command.
 **Check the proposed cause, not just the proposed conclusion**; a right answer for a wrong reason
 sends the next fix to the wrong place.
+
+**A third instance, same day (2026-09-04).** A gap/loud RMS ratio was invented on the spot to
+screen reference recordings for hidden accompaniment, and one file was flagged as a hazard on it.
+The number was reproducible and the metric was meaningless: run on the owner's own clean phone
+recording it scored three times worse than the file it condemned, because it measures how much
+silence a recording contains, not whether anything plays underneath. **A new metric gets validated
+against a known-good control before it is used to judge anything.** One line of code would have
+caught it — the control was already sitting in the same directory.
+
+Worth noting how it surfaced: a subagent re-measured, got a different answer by a different method,
+and said so plainly instead of deferring. It was right to, and the brief had explicitly asked it to
+report disagreement. Asking for that costs one sentence and it has now paid twice.
