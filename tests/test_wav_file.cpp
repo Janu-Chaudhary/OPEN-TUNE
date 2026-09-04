@@ -13,6 +13,7 @@
 #include "tools/autotune-cli/WavFile.h"
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <vector>
 
@@ -53,7 +54,13 @@ TEST_CASE("WavFile: mono float round trip is bit-identical") {
     std::filesystem::remove(path);
 
     REQUIRE(readBack.samples.size() == original.size());
-    CHECK(readBack.sampleRate == doctest::Approx(sampleRate));
+    // Exact equality, not Approx: dr_wav stores the sample rate as an
+    // integer field (drwav_uint32) round-tripped through writeMono/readMono
+    // with no arithmetic on it, so this is the same bit-identical-round-trip
+    // claim the test name and the samples loop above make, not a separate
+    // "close enough" one -- a tolerance here would silently accept a wrong
+    // sample rate the samples loop's exact `==` would never let through.
+    CHECK(readBack.sampleRate == sampleRate);
     for (std::size_t i = 0; i < original.size(); ++i) {
         // Bit-identical: compare with ==, not a tolerance. See comment above.
         CHECK(readBack.samples[i] == original[i]);

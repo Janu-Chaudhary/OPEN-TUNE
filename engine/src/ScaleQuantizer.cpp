@@ -17,6 +17,17 @@ constexpr float kA4MidiNote = 69.0f;
 // base for both directions of the Hz<->MIDI conversion below.
 constexpr float kSemitonesPerOctave = 12.0f;
 
+// Deliberately `float`, not `double`, throughout this file: engine/CLAUDE.md
+// says frequencies live in `float`, snap()'s parameter and return type are
+// both `float` (specs.md section 7.1), and -Wdouble-promotion would flag any
+// stray `double` intermediate as a boundary needing a cast anyway. `float`'s
+// ~7 decimal digits of precision is far more than this conversion needs: the
+// whole pitch range of interest (65-1100 Hz, engine/CLAUDE.md) spans well
+// under 100 fractional MIDI notes, and this engine's coarsest tolerance
+// anywhere is single-digit cents (hundredths of a semitone) -- nowhere near
+// float's precision floor. There is no accuracy reason to reach for `double`
+// here, so the type stays `float` end to end.
+
 } // namespace
 
 ScaleQuantizer::ScaleQuantizer(Scale scale) noexcept : m_scale(scale) {}

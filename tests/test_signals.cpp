@@ -1,7 +1,9 @@
 #include "doctest.h"
 #include "support/Signals.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 // T0.2 done-criterion: a generated 440 Hz sine at 48 kHz has verified length,
 // peak amplitude within 1%, and a zero-crossing count matching 440 Hz within 1%.

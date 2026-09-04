@@ -1,6 +1,7 @@
 #include "doctest.h"
 #include "opentune/PitchCorrector.h"
 
+#include <cstddef>
 #include <memory>
 #include <utility>
 #include <vector>

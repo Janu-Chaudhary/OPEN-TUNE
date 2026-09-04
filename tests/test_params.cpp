@@ -8,19 +8,24 @@
 //   strength = 0.8f, retuneMs = 40.0f, humanizeCents = 15.0f,
 //   preserveFormants = true, scale = { 0, ScaleType::Chromatic }.
 
+// These compare with == rather than doctest::Approx: the default is a literal
+// float member initializer (Params.h) with no arithmetic between it and this
+// read, so the bit pattern this test observes is exactly the literal that was
+// written -- there is no rounding for a tolerance to absorb, and Approx would
+// only hide a typo'd literal that happened to round to the same value.
 TEST_CASE("Params: default strength is 0.8 (mostly hard-tuned, but not full snap)") {
     opentune::Params params;
-    CHECK(params.strength == doctest::Approx(0.8f));
+    CHECK(params.strength == 0.8f);
 }
 
 TEST_CASE("Params: default retuneMs is 40.0 (fast but not instant retune)") {
     opentune::Params params;
-    CHECK(params.retuneMs == doctest::Approx(40.0f));
+    CHECK(params.retuneMs == 40.0f);
 }
 
 TEST_CASE("Params: default humanizeCents is 15.0 (a little residual imperfection)") {
     opentune::Params params;
-    CHECK(params.humanizeCents == doctest::Approx(15.0f));
+    CHECK(params.humanizeCents == 15.0f);
 }
 
 TEST_CASE("Params: default preserveFormants is true (no chipmunk artifact by default)") {
