@@ -476,7 +476,9 @@ performers, not this user.
 
 - [ ] **D12 — real-take AC7 is 3.19%, and take04 carries 82% of it.** D10 took the real set from
   8.08% to 3.19%, a genuine improvement on matched frames (2434 → 1062 octave errors), but not
-  under AC7's 1% bar. Five takes sit at or under ~1.6%; take04 alone is 10.62%. Three things are
+  under AC7's 1% bar. Re-measured on the corrected D11 offset: take04 10.90%, take02 1.73%,
+  take06 1.06%, take03 1.01%, take01 0.55%, take05 0.03% — five of six within touching distance
+  of the bar, one an outlier by a factor of six. Three things are
   unestablished and this needs its own task rather than being absorbed into D10: whether take04's
   own labels are octave-correct there (a 2-of-3 consensus of window-based estimators shares the
   period-doubling ambiguity it is being used to judge), whether the synthetic set covers its worst
