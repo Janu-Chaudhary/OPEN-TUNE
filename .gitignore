@@ -27,3 +27,11 @@ compile_commands.json
 *.swp
 *~
 build-*/
+
+# Reference audio for T1.0. Never committed: the owner's own recordings are
+# personal, film-song covers carry the original composition's copyright, and
+# .wav is binary that poisons an agent's context if read directly (CLAUDE.md).
+# Provenance and derived f0 labels live in testdata/vocals/MANIFEST.md, which
+# IS tracked - the labels are text and are what the measurements cite.
+testdata/vocals/*.wav
+testdata/vocals/*.mp4
