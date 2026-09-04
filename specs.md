@@ -222,12 +222,20 @@ The engine is done when all of the following pass.
 | AC1 | Pitch detection accuracy, synthetic sine 65–1100 Hz | within ±5 cents |
 | AC2 | Pitch detection on recorded vocal vs. hand-labelled reference | within ±15 cents, 95% of voiced frames |
 | AC3 | Corrected output lands on the target pitch | within ±10 cents |
-| AC4 | Round-trip latency, desktop, 256-sample blocks | ≤ 20 ms |
+| AC4 | Round-trip latency, desktop, 256-sample blocks | ≤ 20 ms — see the note below |
 | AC5 | Dropouts during a 10-minute continuous real-time run | zero |
 | AC6 | Voiced/unvoiced classification error rate | < 5% of frames |
 | AC7 | Octave errors (detecting 2× or ½× true pitch) | < 1% of voiced frames |
 | AC8 | CPU usage, one instance, mid-range Android device | < 15% of one core |
 | AC9 | Audio-thread allocations, verified under instrumentation | zero |
+
+**AC4 note (2026-09-04).** Measured during T0.13/T0.14: Signalsmith's latency equals its
+configured block size, so it is a continuous knob and 20 ms *is* reachable — Stage 3 does not
+need a different algorithm. But 20 ms for the corrector alone leaves nothing for the detector,
+host buffering and device I/O, and the low end of the pitch range degrades as the window
+shrinks (at 5.3 ms, 65 Hz is +193 cents wrong). **AC4 must be restated as either a
+corrector-only budget or a lower round-trip target before Stage 3.** Owner decision, due at
+T2.5. Full measurements in `docs/decisions/0006`.
 
 ### Listened
 
@@ -295,3 +303,4 @@ Under consideration for Stage 2 if Signalsmith's formant handling proves insuffi
 | Q4 | Android audio path — AAudio vs OpenSL ES, and per-device latency reality | Stage 7 |
 | Q5 | Desktop GUI toolkit, given JUCE is licence-blocked | Stage 6 |
 | Q6 | Commit signing (GPG or SSH) to make authorship provable, not just asserted | Before first public push |
+| Q7 | Restate AC4 as a corrector-only budget, or lower the round-trip target — 20 ms of corrector leaves no headroom for detector, buffering and I/O (`docs/decisions/0006`) | T2.5 |

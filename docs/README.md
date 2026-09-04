@@ -31,6 +31,7 @@ either should be, or should not exist.
 | 0003 | First-peak rather than global-max lag selection (inverts the octave bias — bears on AC7) |
 | 0004 | Clamp the pitch ratio in the Engine, not the corrector (FR15 — the detector/corrector seam) |
 | 0005 | Vendor Signalsmith Stretch and pull the real corrector into Stage 0 (resolves D5) |
+| 0006 | AC4 is reachable — latency is a configuration knob; low-pitch resolution is the real limit |
 
 ## Guards
 
@@ -46,8 +47,14 @@ either should be, or should not exist.
 
 | Path | Purpose |
 |---|---|
-| `.agents/skills/find-skills/` | `find-skills` (vercel-labs/skills, MIT) — searches the open skills registry and recommends installable skills. Owner-requested 2026-09-04. Symlinked into `.claude/skills/`. **Note:** its own Step 6 instructs installing skills with `-g -y` (global, no confirmation); that step is not followed without asking the owner |
-| `skills-lock.json` | Records which agent skills are installed, with content hashes |
+| `skills-lock.json` | The tracked record of which agent skills this project uses — source and content hash each. Restore them with `npx skills install`. The skill bodies themselves live in `.agents/` and `.claude/skills/`, both gitignored: per-developer tooling, like `.venv` |
+
+Currently pinned: **`find-skills`** (vercel-labs/skills, MIT) — searches the open skills
+registry and recommends installable skills. Owner-requested 2026-09-04.
+**Read any skill before use.** They run with full agent permissions, which makes them a
+prompt-injection surface regardless of licence — a permissive licence is not a safety
+property. `find-skills`' own Step 6 instructs installing further skills with `-g -y`
+(global, no confirmation); that is not followed without asking the owner.
 | `.claude/hooks/format-changed.sh` | clang-format on files changed by any Bash command — closes the gap the first hook leaves |
 
 ## Code (created as tasks complete)
@@ -84,4 +91,5 @@ either should be, or should not exist.
 ```bash
 git config core.hooksPath .githooks   # REQUIRED - identity guards are inert without it
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt   # analysis tooling
+npx skills install                    # agent skills pinned in skills-lock.json
 ```

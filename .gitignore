@@ -11,6 +11,15 @@ compile_commands.json
 .idea/
 .DS_Store
 .venv/
+
+# Agent skills are per-developer tooling, installed not committed -- the same
+# treatment as .venv above. skills-lock.json IS tracked and pins the exact
+# source and content hash of each one, so `npx skills install` reproduces the
+# set exactly. Keeping the skill bodies out of the repo also means installing
+# a skill is never an act of redistributing someone else's file, whatever
+# licence it carries.
+.agents/
+.claude/skills/
 .superpowers/
 
 # Editor lock/swap files
