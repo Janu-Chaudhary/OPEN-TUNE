@@ -839,3 +839,142 @@ TEST_CASE("D10: YIN does not read breathy phonation an octave low") {
         CHECK(voicedTrials == 9);
     }
 }
+
+// ---------------------------------------------------------------------------
+// T1.8 -- the diplophonic / weak-odd-harmonic voice
+// ---------------------------------------------------------------------------
+//
+// THE SIGNAL. A voice whose ODD harmonics -- H1, H3, H5 ... -- are all
+// attenuated together, by the same 18-24 dB, while the even ones stay at full
+// strength. This is not a made-up stress case: decision 0010 measured it on
+// the owner's take04, where the odd partials of a sustained ~312 Hz note sit
+// 14-20 dB below the envelope their even neighbours trace and carry only
+// 1-4% of the frame's energy.
+//
+// WHY IT BREAKS YIN, in one line of arithmetic. Split the waveform into its
+// even-harmonic part E and its odd-harmonic part O. E repeats every P/2 by
+// construction; O *inverts* every P/2, so O(t + P/2) = -O(t). The difference
+// function at half a period therefore sees only the odd part, doubled:
+//
+//     d(P/2) = sum (x[j] - x[j+P/2])^2 = sum (2*O[j])^2 = 4 * W * energy(O)
+//
+// and since d' divides by the running mean, which is about 2*W*energy(total),
+//
+//     d'(P/2) ~ 2 * energy(O) / energy(total)  =  twice the odd-harmonic
+//                                                 energy fraction.
+//
+// So the moment the odd harmonics fall below ~5% of the energy, d'(P/2) drops
+// under step 3's 0.1 threshold and the first-crossing walk stops at the HALF
+// period -- reporting an octave high -- while d'(P) three to five times lower
+// sits untouched further along the lag axis. Measured on take04 at t=48.263 s:
+// d'(P/2) = 0.0444, d'(P) = 0.0106, threshold 0.1000.
+//
+// WHY D10's RELATIVE THRESHOLD DOES NOT COVER IT. max(0.1, 2*dPrimeMin) can
+// only ever RAISE the bar, and dPrimeMin on these frames is ~0.008, so the
+// term is ~0.016 and the effective threshold is exactly the paper's 0.1. D10
+// is inactive here; this is a pure paper-YIN failure, and it is the opposite
+// direction from D10's (which was octave-LOW on breathy phonation).
+//
+// The signals below use the same harmonicStack helper as the T1.5 test above,
+// with oddScale swept from 0.12 to 0.06 -- 18.4 to 24.4 dB below the even
+// harmonics, straddling take04's measured 14-20 dB. Every fundamental is in
+// 262-330 Hz, the band holding 5404 of take04's frames and a 10.25%
+// octave-high rate.
+TEST_CASE("T1.8: YIN does not read a diplophonic voice an octave high") {
+    // 18.4, 20.0, 21.9 and 24.4 dB below the even harmonics. oddScale 0.14
+    // and above is NOT included, and deliberately: there the fundamental's
+    // dip is genuinely the first one under 0.1 and the detector already gets
+    // it right (the T1.5 test above pins 0.2). The sweep starts where the
+    // failure starts.
+    const double oddScales[] = {0.12, 0.10, 0.08, 0.06};
+
+    // 2*f0 is inside the 65-1100 Hz search range for every one of these, so
+    // the wrong answer is always reachable -- a pass cannot come from the
+    // octave simply being out of bounds.
+    const double fundamentals[] = {261.63, 293.66, 311.13, 329.63};
+
+    const int numSamples = 12288;
+
+    int octaveHigh = 0;
+    int voicedTrials = 0;
+    int trials = 0;
+    for (const double oddScale : oddScales) {
+        for (const double f0 : fundamentals) {
+            const std::vector<float> signal =
+                harmonicStack(f0, kSampleRate, numSamples, 1, 8, oddScale, 1.0);
+
+            YinDetector detector;
+            detector.prepare(kSampleRate, kBlockSize);
+            const PitchEstimate estimate = feedBlocks(detector, signal);
+
+            const double cents = estimate.frequencyHz > 0.0f
+                                     ? centsError(static_cast<double>(estimate.frequencyHz), f0)
+                                     : 0.0;
+            INFO("oddScale ", oddScale, ", f0 ", f0, " Hz -> ", estimate.frequencyHz, " Hz (",
+                 cents, " cents), voiced ", estimate.voiced);
+
+            ++trials;
+            if (estimate.voiced) {
+                ++voicedTrials;
+                // Octave UP specifically (docs/lessons.md L6: an octave rate
+                // with no sign attached mixes two populations whose fixes
+                // point in opposite directions). Past +600 cents the reading
+                // is closer to 2*f0 than to f0.
+                if (cents > 600.0) {
+                    ++octaveHigh;
+                }
+                // And the answer must actually be the fundamental, not merely
+                // "not the octave" -- a rule that scattered the estimate
+                // somewhere else entirely would pass the check above.
+                CHECK(std::abs(cents) < 45.0);
+            }
+        }
+    }
+
+    INFO(octaveHigh, " octave-high of ", voicedTrials, " voiced trials");
+    CHECK(octaveHigh == 0);
+
+    // The null-hypothesis guard this project has been bitten by five times
+    // (docs/assumption-log.md section 4): a "fix" that reports these frames
+    // unvoiced would satisfy the check above and make the detector useless.
+    // Every one of these trials is reported voiced by the code BEFORE the
+    // fix -- with high confidence, which is precisely what makes the bug
+    // dangerous -- so this pins the count where it already was.
+    CHECK(voicedTrials == trials);
+}
+
+TEST_CASE("T1.8: an even-harmonics-only signal still reads 2*f0 -- behaviour pin") {
+    // THIS IS A PIN, NOT A TEST OF CORRECTNESS. With the odd harmonics
+    // *exactly* zero the waveform genuinely repeats every P/2: there is no
+    // sense in which 2*f0 is an error, and T1.2 measured r(P/2) = 1.0000
+    // there (docs/decisions/0003). Only human perception insists on the
+    // missing fundamental, and this detector does not model perception.
+    //
+    // It sits next to the test above because it is the exact limit the fix
+    // must not cross. The diplophonic repair asks "does the signal match
+    // itself far better at twice this lag?" -- and here the answer is no: at
+    // 2L the residual is FOUR times larger, not smaller, because with a truly
+    // periodic signal the only thing left at either lag is the fractional-lag
+    // quantisation error, and that grows as the square of the lag. The rule
+    // therefore declines to promote, by the same arithmetic that makes it
+    // promote on the diplophonic case. If this pin ever flips, the repair has
+    // stopped distinguishing "nearly periodic at P/2" from "periodic at P/2",
+    // which is the whole of its job.
+    //
+    // Counting this case as an AC7 failure once produced a reported 3.83%
+    // where the true figure was 0.000% (docs/assumption-log.md section 3,
+    // entry 14). It is excluded from the AC7 aggregates for that reason.
+    const double fundamentals[] = {220.0, 261.63, 293.66, 329.63};
+    for (const double f0 : fundamentals) {
+        const std::vector<float> signal = harmonicStack(f0, kSampleRate, 12288, 1, 8, 0.0, 1.0);
+
+        YinDetector detector;
+        detector.prepare(kSampleRate, kBlockSize);
+        const PitchEstimate estimate = feedBlocks(detector, signal);
+
+        REQUIRE(estimate.voiced);
+        const double cents = centsError(static_cast<double>(estimate.frequencyHz), f0);
+        INFO("f0 ", f0, " Hz -> ", estimate.frequencyHz, " Hz (", cents, " cents)");
+        CHECK(std::abs(cents - 1200.0) < 45.0);
+    }
+}

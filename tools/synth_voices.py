@@ -500,6 +500,65 @@ STEADY_NOTES = [
 STEADY_S = 1.5
 CASE_S = 2.5
 
+# --- The graded odd-harmonic attenuation family (T1.8) ---------------------
+#
+# WHY THIS FAMILY EXISTS.  Decision 0010 measured YIN reading an octave HIGH on
+# 7.78% of take04's frames and traced the mechanism exactly: in a diplophonic
+# passage the ODD harmonics are present but sit 14-20 dB below the envelope the
+# EVEN ones trace, carrying only ~1-4% of the energy.  A waveform like that
+# genuinely repeats to within a few percent at HALF its period, so YIN's step-3
+# walk crosses the 0.1 threshold at P/2 and stops there.
+#
+# The set could not see that failure, and it is worth being precise about why,
+# because "we had weak-fundamental cases" sounds like it should have been
+# enough.  `weak_fundamental` attenuates H1 alone and `missing_fundamental`
+# removes it; in both, H3 and H5 survive at full strength, and odd harmonics do
+# not repeat at P/2 -- they invert there.  So neither creates any ambiguity at
+# all (T1.2, docs/lessons.md L4).  `even_harmonics_only` sits at the far end,
+# odd harmonics exactly zero, where P/2 *is* the period and 2*f0 is the correct
+# answer -- a behaviour pin, not a test.  take04's condition is the middle of
+# that range and the set had nothing in it: every odd harmonic pushed down
+# TOGETHER, by a finite amount.
+#
+# What the parameter means.  `att_db` is how far the odd harmonics are pushed
+# below where the -12 dB/octave source rolloff would otherwise put them -- i.e.
+# below the envelope their even neighbours trace, which is exactly the quantity
+# decision 0010 measured on take04.  The sweep spans:
+#
+#     6 dB   odd harmonics still dominant; d'(P/2) ~ 0.3-0.6, clearly periodic at P
+#    12 dB   approaching the 0.1 threshold; the boundary case
+#    15 dB   straddles it -- fails at 294 and 330 Hz, holds at 262 Hz
+#    18-24   take04's measured condition: 0.5-3% of the energy in the odd partials
+#    30 dB   odd harmonics all but gone; genuinely close to periodic at P/2
+#
+# and the fundamental sweeps 262-330 Hz because that is where the real failure
+# lives: 5404 of take04's frames sit in 260-320 Hz and carry a 10.25% octave-high
+# rate, against 0.26% below 260 Hz (decision 0010).  One note would measure one
+# note.
+#
+# The ground truth is not affected by any of this.  Attenuating harmonics scales
+# them; it does not move them.  The label is still the phase accumulator's own
+# per-sample f0 -- and `--verify`'s Method C measures the odd partials' actual
+# frequency back out of the emitted audio to prove it, because Methods A and B
+# cannot: A counts mean-crossings, and this waveform crosses twice per cycle;
+# B takes the shortest strong correlation peak, which here IS the half period.
+ODD_ATTENUATION_DB = [6.0, 12.0, 15.0, 18.0, 21.0, 24.0, 30.0]
+ODD_ATTENUATION_F0 = [261.63, 293.66, 329.63]
+ODD_ATTENUATION_S = 1.5
+ODD_ATTENUATION_HARMONICS = 24
+
+
+def odd_attenuated_amps(att_db, n_harmonics=ODD_ATTENUATION_HARMONICS):
+    """Source harmonic amplitudes with every ODD harmonic pushed down att_db.
+
+    Index k-1 holds harmonic k, so `[0::2]` is H1, H3, H5 ... -- the same
+    slice `even_harmonics_only` sets to zero, which is the att_db -> infinity
+    limit of this family.
+    """
+    amps = glottal_rolloff(n_harmonics)
+    amps[0::2] *= 10.0 ** (-att_db / 20.0)
+    return amps
+
 
 def build_cases():
     """Return {case_id: (audio, f0_per_sample, voiced_mask, description)}.
@@ -601,6 +660,30 @@ def build_cases():
             ),
             "220 Hz harmonic source, %s" % note,
         )
+
+    # --- graded odd-harmonic attenuation (T1.8) ---------------------------
+    # The missing middle of the family above: not H1 alone, but every odd
+    # harmonic together, swept through the band where the waveform stops being
+    # unambiguously periodic at P and starts being nearly periodic at P/2.
+    # See ODD_ATTENUATION_DB for what the parameter means and why these values.
+    for att in ODD_ATTENUATION_DB:
+        for f0 in ODD_ATTENUATION_F0:
+            cid = "oddweak_%02ddb_%03dhz" % (round(att), round(f0))
+            cases[cid] = (
+                *concat(
+                    [
+                        seg_voiced(
+                            traj_steady(ODD_ATTENUATION_S, f0),
+                            vowel="aa",
+                            harmonic_amps=odd_attenuated_amps(att),
+                            n_harmonics=ODD_ATTENUATION_HARMONICS,
+                            seed=21,
+                        )
+                    ]
+                ),
+                "%.2f Hz harmonic source, ALL odd harmonics attenuated %.0f dB "
+                "(diplophonic; true period is still 1/f0)" % (f0, att),
+            )
 
     # Telephone band: the realistic way a fundamental goes missing.  A 196 Hz
     # voice through a 300 Hz high-pass loses H1 outright and most of H2's level,
@@ -834,6 +917,101 @@ def method_b_long_lag(audio, fmin=55.0, fmax=1400.0):
     return n_cyc, lag, corr
 
 
+# --- Method C: heterodyne phase slope on a chosen harmonic -----------------
+
+
+def method_c_heterodyne(audio, f0_ref, harmonic=1, fs=SAMPLE_RATE, trim=0.2):
+    """Measure ONE harmonic's frequency out of the emitted audio, precisely.
+
+    WHY A THIRD METHOD IS NEEDED.  Methods A and B both assume the waveform's
+    period is legible from its gross shape, and on the odd-attenuation family
+    neither assumption survives:
+
+      * Method A counts upward mean-crossings of the glottal source.  With the
+        odd harmonics 18 dB down the source very nearly repeats at HALF the
+        period, so it crosses its mean twice per cycle and A counts double.
+      * Method B takes the shortest correlation peak reaching 95% of the best.
+        At 18 dB down the correlation at P/2 is ~0.99 of the correlation at P,
+        so B picks the half period -- it fails in exactly the way the detector
+        under test fails, which makes it useless as a check on that detector.
+
+    Both would report "+1200 cents" and both would be wrong about the LABEL
+    while being right about the waveform's near-symmetry.  So this method does
+    not ask "what is the period"; it asks the narrower question the ground truth
+    actually rests on: **is there a partial at exactly `harmonic * f0_ref`?**
+    For harmonic = 1 that is the fundamental itself -- the thing decision 0010
+    says is present-but-weak on take04, and the thing the label claims.
+
+    HOW.  Shift the spectrum down by `harmonic * f0_ref` (multiply by a complex
+    exponential), low-pass what lands near DC, and fit a straight line to the
+    unwrapped phase.  If the partial really sits at that frequency the residual
+    phase is flat and the fitted slope is zero; a slope of `w` rad/s means the
+    partial is actually `w / 2pi` Hz away.  A lag-domain method resolves a
+    period to a fraction of a sample; a phase fit over a whole second resolves a
+    frequency to a small fraction of a millihertz, which is what makes the
+    sub-millicent bar checkable at all.
+
+    Nothing here shares code with the synthesis path, and nothing here consults
+    the phase accumulator: it reads the samples in the WAV.  The one thing it
+    takes from the label is the reference frequency being TESTED -- which is the
+    point, since the whole question is whether the audio matches that label.
+
+    `trim` drops that fraction from each end before fitting: the 8 ms
+    raised-cosine fades on the segment, and the filter's own edge transient,
+    are amplitude effects with no bearing on frequency, but they add phase noise
+    where the signal is small.
+
+    Returns (cents_error, coherence).  `coherence` is the fraction of the
+    band-limited signal's energy that is actually in the fitted component --
+    near 1 when a real partial was found, near 0 when the band held only noise.
+    It exists so a "0.000 cents" answer produced by measuring nothing at all
+    cannot pass unnoticed.
+    """
+    from scipy.signal import butter, filtfilt
+
+    x = np.asarray(audio, float)
+    x = x - float(np.mean(x))
+    n = len(x)
+    t = np.arange(n) / float(fs)
+
+    # Shift the partial of interest to DC.
+    z = x * np.exp(-2j * np.pi * harmonic * f0_ref * t)
+
+    # Keep only what is now near DC.  The nearest neighbouring partials sit at
+    # +/- f0_ref after the shift, so a cutoff well below f0_ref/2 isolates the
+    # one we asked about.  filtfilt is zero-phase -- a phase-shifting filter
+    # would be self-defeating in a method that reads phase -- and this is
+    # offline verification code, so its non-causality costs nothing.
+    cutoff = 0.3 * f0_ref
+    b, a = butter(4, cutoff / (0.5 * fs), btype="low")
+    zf = filtfilt(b, a, z.real) + 1j * filtfilt(b, a, z.imag)
+
+    k = int(round(trim * n))
+    seg = zf[k : n - k]
+    tt = t[k : n - k]
+    if len(seg) < 100:
+        return float("nan"), 0.0
+
+    phase = np.unwrap(np.angle(seg))
+    # Weight by amplitude: samples where the partial is momentarily small carry
+    # noisier phase and should not pull the fit.
+    w = np.abs(seg)
+    A = np.vstack([tt, np.ones_like(tt)]).T
+    sw = np.sqrt(w)
+    slope, _ = np.linalg.lstsq(A * sw[:, None], phase * sw, rcond=None)[0]
+
+    measured = harmonic * f0_ref + slope / (2.0 * np.pi)
+    cents = 1200.0 * np.log2((measured / harmonic) / f0_ref)
+
+    # Coherence: how much of the band-limited energy the fitted sinusoid
+    # explains.  Demodulate by the fitted slope and see how much survives
+    # averaging -- a genuine partial averages to its own amplitude, noise
+    # averages toward zero.
+    resid = seg * np.exp(-1j * slope * tt)
+    coherence = float(np.abs(np.mean(resid)) / (np.mean(np.abs(seg)) + 1e-300))
+    return float(cents), coherence
+
+
 def verify():
     """Prove the generator before trusting a single number it produces.
 
@@ -932,8 +1110,96 @@ def verify():
     if abs(err - 1200.0) > 1.0:
         ok = False
 
+    # ---- Method C: heterodyne phase slope on the odd-attenuation family ----
+    #
+    # Method C is a NEW instrument, so it is calibrated before it is believed
+    # (docs/lessons.md L5; docs/assumption-log.md pattern B).  Two controls,
+    # both free and both already in this file:
+    #
+    #   POSITIVE -- run it on the steady notes, where Methods A and B have
+    #     already agreed to well under a cent.  C must reproduce that.
+    #   NEGATIVE -- run it on the same audio against a reference an octave
+    #     wrong.  It must come back at about -1200 cents.  Without this a
+    #     method that measures nothing at all still prints a comforting zero.
+    print("\n--- Method C: heterodyne phase slope on one harmonic ---")
+    print("(the only method that survives odd-harmonic attenuation; A counts")
+    print(" double there and B locks to the half period, exactly as YIN does)")
+    print("  %-30s %12s %10s" % ("control", "err cents", "coherence"))
+    worst_c = 0.0
+    for f0, vowel in STEADY_NOTES[:6]:
+        audio, f0_actual, _ = render_voiced(traj_steady(1.5, f0), vowel=vowel, seed=1)
+        c, coh = method_c_heterodyne(audio, f0, harmonic=1)
+        worst_c = max(worst_c, abs(c))
+        bad = abs(c) >= 0.1 or coh < 0.9
+        if bad:
+            ok = False
+        print("  %-30s %12.6f %10.4f%s"
+              % ("positive: steady %.2f Hz" % f0, c, coh, "" if not bad else "   <-- FAIL"))
+
+    # The negative controls have to be chosen with care.  "Reference an octave
+    # low" is NOT one: heterodyning a voice at 2*f0 lands H2 at DC, and H2 is
+    # really there, so the method correctly answers "yes, a partial at exactly
+    # this frequency" and reports zero.  That is the method working, not
+    # failing.  What must be shown is that it says something DIFFERENT when the
+    # partial it was asked about is absent.
+    #
+    #   (a) `even_harmonics_only` has H1 exactly zero.  Asked about H1 there,
+    #       the method must not answer 0 cents -- it must find the nearest thing
+    #       that IS present, H2, and say so as +1200.
+    #   (b) A reference at 1.5*f0, where no partial exists at all, must
+    #       likewise land on a real partial rather than on the asked-for one.
+    even_amps = glottal_rolloff(ODD_ATTENUATION_HARMONICS)
+    even_amps[0::2] = 0.0
+    audio, _, _ = render_voiced(traj_steady(1.5, 220.0), vowel="aa",
+                                harmonic_amps=even_amps,
+                                n_harmonics=ODD_ATTENUATION_HARMONICS, seed=7)
+    c_neg, coh_neg = method_c_heterodyne(audio, 220.0, harmonic=1)
+    neg_ok = abs(c_neg - 1200.0) < 5.0
+    if not neg_ok:
+        ok = False
+    print("  %-30s %12.6f %10.4f%s"
+          % ("negative: H1 absent, ask for H1", c_neg, coh_neg,
+             "   (expected +1200)" if neg_ok else "   <-- FAIL (answers 0 regardless)"))
+
+    audio, _, _ = render_voiced(traj_steady(1.5, 261.63), vowel="aa", seed=1)
+    c_neg2, coh_neg2 = method_c_heterodyne(audio, 1.5 * 261.63, harmonic=1)
+    neg2_ok = abs(c_neg2) > 100.0
+    if not neg2_ok:
+        ok = False
+    print("  %-30s %12.6f %10.4f%s"
+          % ("negative: ref 1.5*f0, no partial", c_neg2, coh_neg2,
+             "   (expected far from 0)" if neg2_ok else "   <-- FAIL"))
+
+    # Now the family itself.  Harmonic 1 is deliberate: it is the partial the
+    # attenuation is acting on, the one a detector is missing when it reads the
+    # octave, and the one whose existence at exactly f0 the label asserts.
+    print("  %-30s %12s %10s %10s" % ("odd-attenuation family", "err cents", "coherence", "H1 dBc"))
+    for att in ODD_ATTENUATION_DB:
+        for f0 in ODD_ATTENUATION_F0:
+            audio, f0_actual, _ = render_voiced(
+                traj_steady(ODD_ATTENUATION_S, f0), vowel="aa",
+                harmonic_amps=odd_attenuated_amps(att),
+                n_harmonics=ODD_ATTENUATION_HARMONICS, seed=21)
+            c, coh = method_c_heterodyne(audio, f0, harmonic=1)
+            # How far H1 actually sits below H2 in the emitted audio, measured
+            # from the spectrum -- reported so the sweep's units are visible in
+            # the same table as its ground truth, rather than asserted.
+            spec = np.abs(np.fft.rfft(audio * np.hanning(len(audio))))
+            freqs = np.fft.rfftfreq(len(audio), 1.0 / SAMPLE_RATE)
+            def _peak(f):
+                sel = (freqs > f - 15.0) & (freqs < f + 15.0)
+                return float(spec[sel].max())
+            dbc = 20.0 * np.log10(_peak(f0) / (_peak(2.0 * f0) + 1e-300))
+            bad = abs(c) >= 0.1 or coh < 0.9
+            if bad:
+                ok = False
+            print("  %-30s %12.6f %10.4f %10.1f%s"
+                  % ("%.0f dB down, %.2f Hz" % (att, f0), c, coh, dbc,
+                     "" if not bad else "   <-- FAIL"))
+
     print("\n  Method A worst cumulative error: %.6f cents" % worst_a)
     print("  Method B worst error:             %.6f cents" % worst_b)
+    print("  Method C worst error (controls):  %.6f cents" % worst_c)
     print("  Jitter cases are Method A's to judge -- a jittered signal is not")
     print("  periodic, so Method B's correlation peak is not defined to a cent.")
     print("\n  verdict: %s" % ("PASS" if ok else "FAIL"))

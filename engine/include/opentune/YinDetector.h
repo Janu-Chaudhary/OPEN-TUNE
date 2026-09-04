@@ -224,6 +224,89 @@ private:
     // smallest departure from the paper's rule that clears AC7 outright.
     static constexpr float kRelativeThreshold = 2.0f;
 
+    // --- The octave-doubling repair (T1.8) ------------------------------
+    //
+    // Step 3 walks short-to-long and stops at the first dip under the
+    // threshold. That is the right rule and it is why period doubling
+    // normally loses. It has one blind spot, and it is a property of the
+    // SIGNAL, not of the constant: a voice whose odd harmonics are all
+    // weak nearly repeats at HALF its period, so a genuine dip appears
+    // there and the walk stops on it before ever reaching the period.
+    //
+    // Decision 0010 measured this on the owner's take04 -- odd partials
+    // 14-20 dB below the envelope their even neighbours trace, carrying
+    // 1-4% of the frame's energy -- and the arithmetic is exact. Split the
+    // waveform into its even-harmonic part E and its odd-harmonic part O.
+    // E repeats every P/2; O *inverts* every P/2, so O(t + P/2) = -O(t).
+    // The difference function at half a period therefore sees only the odd
+    // part, doubled:
+    //
+    //     d(P/2) = sum (x[j] - x[j + P/2])^2 = sum (2*O[j])^2
+    //
+    // and step 2 divides by a running mean of about 2*W*energy(total), so
+    //
+    //     d'(P/2) ~ 2 * (odd-harmonic energy fraction).
+    //
+    // Below ~5% odd energy that lands under kAbsoluteThreshold and the
+    // half period wins. On take04 at t = 48.263 s: d'(P/2) = 0.0444,
+    // d'(P) = 0.0106, threshold 0.1000. D10's relative term cannot help --
+    // it only ever RAISES the bar, and 2*dPrimeMin there is ~0.016.
+    //
+    // THE REPAIR, and why it is a check rather than a different constant.
+    // A shorter lag can always be made to lose by moving the bar, but the
+    // bar has only two directions and the two octave failures sit on
+    // opposite sides of it -- decision 0010 measured six threshold
+    // variants and every one traded an octave-high error for an
+    // octave-low one. So the threshold is left exactly as D10 left it and
+    // the chosen lag is instead CONFIRMED after the fact, against the one
+    // thing a threshold cannot see: the shape of d' at multiples of the
+    // lag it just picked.
+    //
+    // If L really is the period, the signal cannot match itself markedly
+    // BETTER at 2L than at L -- period-to-period differences accumulate
+    // with lag, they do not shrink. If L is half the period, they do
+    // exactly that, and they do it in a comb: the mismatch is antiperiodic
+    // in L, so the even multiples 2L and 4L are deep while L and 3L are
+    // shallow. So the repair asks for two confirmations, not one:
+    //
+    //     d'(2L) < kOctaveDoubleMax     * d'(L)
+    //     d'(4L) < kOctaveQuadrupleMax  * d'(L)
+    //
+    // and promotes L to 2L when both hold. One deep even multiple can be
+    // an accident -- on a 15% shimmer, two cycles can match better than
+    // one -- and that accident is what sank the naive "promote when
+    // d'(2L) < 0.5 d'(L)" rule decision 0010 rejected: it regressed the
+    // synthetic set from 0.000%. Requiring 4L as well is what separates a
+    // coincidence from a comb, and it is measured to be the decisive
+    // guard, not a decorative one.
+    //
+    // WHY THESE VALUES. Measured over 5815 frames of the 32 pre-existing
+    // synthetic cases, 5733 frames of the odd-attenuation family added by
+    // T1.8, and 5840 frames of the six real takes:
+    //
+    //   * kOctaveDoubleMax anywhere in 0.45-0.55 and kOctaveQuadrupleMax
+    //     anywhere in 0.65-0.80 give the same answer to within 0.1 points
+    //     on every one of the three sets. 0.5 and 0.7 are the middle of
+    //     that plateau, not a fitted point.
+    //   * The existing synthetic set stays at 0.000% octave errors for
+    //     kOctaveQuadrupleMax up to 1.0 at ANY kOctaveDoubleMax up to 1.0.
+    //     Without the 4L condition it breaks at 0.25.
+    //   * On a signal that is TRULY periodic at L, both ratios come out at
+    //     about 4 and 16, not below 1 -- with nothing left at either lag
+    //     but the fractional-lag quantisation residual, which grows as the
+    //     square of the lag. That is why `even_harmonics_only`, where P/2
+    //     genuinely IS the period, is untouched: the rule declines to
+    //     promote there by the same arithmetic that makes it promote on a
+    //     diplophonic voice.
+    //
+    // The check needs d' at 4L, so it can only run when 4L is still inside
+    // the answer range. That confines it to chosen lags at or above about
+    // 260 Hz, which is where the failure lives (decision 0010: 10.25%
+    // octave-high at 260-320 Hz against 0.26% below 260 Hz) -- and outside
+    // that band it declines rather than guessing on one confirmation.
+    static constexpr float kOctaveDoubleMax = 0.5f;
+    static constexpr float kOctaveQuadrupleMax = 0.7f;
+
     // Maximum aperiodicity -- d' at the chosen lag -- for a frame to count
     // as voiced (T1.7, AC6). Deliberately looser than kAbsoluteThreshold:
     // a frame whose best dip just missed the 0.1 search threshold is still

@@ -294,6 +294,101 @@ PitchEstimate YinDetector::process(const float* block, int n) noexcept {
         break;
     }
 
+    // --- Step 5 (T1.7): voiced/unvoiced from the aperiodicity -------------
+    //
+    // Steps 1-3 always name a lag -- step 3's threshold is relative as well
+    // as absolute, so the deepest dip always qualifies and the search never
+    // comes back empty, even on audio with no periodicity in it at all.
+    // Something has to decide whether that lag means anything, and YIN has
+    // already computed the number that answers it.
+    //
+    // This runs BEFORE step 3b and step 4, not after, and the ordering is
+    // deliberate. It means the voicing decision is taken on step 3's lag
+    // alone -- exactly the value it was taken on before T1.8 existed -- so
+    // the octave repair below cannot turn an unvoiced frame voiced, cannot
+    // move recall, and cannot move AC6. It can only change WHICH pitch a
+    // frame that was already going to be reported voiced is given. A repair
+    // that quietly changed the voiced population would be improving one
+    // number by moving frames out of the denominator of another.
+    //
+    // This is also what bounds D10's adaptive threshold from above. On an
+    // unpitched frame the threshold rises with the (high) minimum d', so it
+    // may well accept some short-lag noise wiggle -- but that wiggle's own
+    // d' is then above the gate here and the frame is reported unvoiced.
+    // The relative threshold can cost recall on genuinely hopeless audio;
+    // it cannot turn noise into a confident wrong pitch.
+    //
+    // d' at the chosen lag IS the aperiodicity. No extra statistic, no
+    // loudness rule: 0 means the signal repeats perfectly at that lag,
+    // ~1 means it is no more self-similar there than at any random lag.
+    // Measured on this repo's own test signals at 48 kHz: a clean sine
+    // lands below 0.01, white noise lands at 0.91-0.93 across five seeds,
+    // and digital silence is exactly 1.0 by the guarded ratio in step 2.
+    // That is a wide, unambiguous gap, and it closes AC6 without a
+    // separate silence gate -- which matters, because a loudness gate
+    // cannot catch white noise at all: noise is as loud as a sung note and
+    // has no pitch whatsoever.
+    if (m_cmnd[static_cast<std::size_t>(bestLag)] >= static_cast<double>(kVoicedAperiodicityMax)) {
+        // PitchEstimate's contract: 0 Hz is not a guess at the pitch, it
+        // is the absence of one. Downstream, unvoiced audio passes through
+        // uncorrected, so breaths and consonants are never pitched.
+        return PitchEstimate{0.0f, 0.0f, false};
+    }
+
+    // --- Step 3b (T1.8): confirm the lag is not half the period -----------
+    //
+    // Everything up to here treats "the first dip under the bar" as the
+    // answer. On a voice whose ODD harmonics are all weak, that dip can be
+    // at HALF the period, and no choice of bar fixes it -- see the long
+    // note on kOctaveDoubleMax in YinDetector.h for the arithmetic and for
+    // why six threshold variants were measured and rejected first.
+    //
+    // The idea in one sentence: a real period cannot be beaten by its own
+    // double. Differences between one cycle and the next accumulate as the
+    // lag grows -- so if L is the period, d'(2L) is at best about equal to
+    // d'(L) and in practice several times larger. If instead L is HALF the
+    // period, the mismatch at L is the odd-harmonic part, which inverts
+    // every L and therefore cancels at every EVEN multiple of L: d'(2L)
+    // and d'(4L) collapse while d'(L) and d'(3L) do not. That alternation
+    // is a comb, and a comb is what is checked here -- one deep even
+    // multiple could be a coincidence (on a heavily shimmering voice, two
+    // cycles apart really can match better than one), two in the right
+    // places is a structure.
+    //
+    // Cost: four array reads and three comparisons, on a frame that has
+    // already survived the voicing gate. No allocation, no branching on
+    // anything but already-computed values (constitution II).
+    //
+    // Note what is NOT done: this promotes at most once, and never walks
+    // further. 4L is checked because it confirms the comb, not because 4L
+    // is a candidate answer. A repair that kept doubling would be a search,
+    // and a search over multiples is the "coin flip between P, 2P and 3P"
+    // that step 3 exists to avoid.
+    if (4 * bestLag <= m_maxLagSamples) {
+        const double dPrimeAtLag = m_cmnd[static_cast<std::size_t>(bestLag)];
+        const double dPrimeAtDouble = m_cmnd[static_cast<std::size_t>(2 * bestLag)];
+        const double dPrimeAtQuadruple = m_cmnd[static_cast<std::size_t>(4 * bestLag)];
+        if (dPrimeAtDouble < static_cast<double>(kOctaveDoubleMax) * dPrimeAtLag &&
+            dPrimeAtQuadruple < static_cast<double>(kOctaveQuadrupleMax) * dPrimeAtLag) {
+            bestLag *= 2;
+            // Slide to the bottom of the dip at the doubled lag, the same
+            // way step 3 does at the crossing. The comb argument locates
+            // the period to within a sample or two of 2L; it does not
+            // promise 2L is the exact minimum, and the parabola below
+            // wants to be centred on the real one.
+            while (bestLag + 1 <= m_maxLagSamples &&
+                   m_cmnd[static_cast<std::size_t>(bestLag + 1)] <
+                       m_cmnd[static_cast<std::size_t>(bestLag)]) {
+                ++bestLag;
+            }
+            while (bestLag - 1 >= m_minLagSamples &&
+                   m_cmnd[static_cast<std::size_t>(bestLag - 1)] <
+                       m_cmnd[static_cast<std::size_t>(bestLag)]) {
+                --bestLag;
+            }
+        }
+    }
+
     // --- Step 4 (T1.6): parabolic interpolation ---------------------------
     //
     // bestLag is a whole number of samples, and a true period almost never
@@ -340,38 +435,13 @@ PitchEstimate YinDetector::process(const float* block, int n) noexcept {
     // never divides by zero.
     const float frequencyHz = static_cast<float>(m_sampleRate / refinedLag);
 
-    // --- Step 5 (T1.7): voiced/unvoiced from the aperiodicity -------------
-    //
-    // Steps 1-4 always name a lag -- step 3's threshold is relative as well
-    // as absolute, so the deepest dip always qualifies and the search never
-    // comes back empty, even on audio with no periodicity in it at all.
-    // Something has to decide whether that lag means anything, and YIN has
-    // already computed the number that answers it.
-    //
-    // This is also what bounds D10's adaptive threshold from above. On an
-    // unpitched frame the threshold rises with the (high) minimum d', so it
-    // may well accept some short-lag noise wiggle -- but that wiggle's own
-    // d' is then above the gate below and the frame is reported unvoiced.
-    // The relative threshold can cost recall on genuinely hopeless audio;
-    // it cannot turn noise into a confident wrong pitch.
-    //
-    // d' at the chosen lag IS the aperiodicity. No extra statistic, no
-    // loudness rule: 0 means the signal repeats perfectly at that lag,
-    // ~1 means it is no more self-similar there than at any random lag.
-    // Measured on this repo's own test signals at 48 kHz: a clean sine
-    // lands below 0.01, white noise lands at 0.91-0.93 across five seeds,
-    // and digital silence is exactly 1.0 by the guarded ratio in step 2.
-    // That is a wide, unambiguous gap, and it closes AC6 without a
-    // separate silence gate -- which matters, because a loudness gate
-    // cannot catch white noise at all: noise is as loud as a sung note and
-    // has no pitch whatsoever.
+    // The aperiodicity of the lag actually being reported. On a frame that
+    // step 3b promoted this is d' at the DOUBLED lag -- lower than the
+    // value the voicing gate above was taken on, never higher, because the
+    // promotion only fires when the doubled lag is markedly deeper. So the
+    // reported confidence rises on repaired frames, which is the honest
+    // answer: the signal really does repeat better there.
     const double aperiodicity = m_cmnd[static_cast<std::size_t>(bestLag)];
-    if (aperiodicity >= static_cast<double>(kVoicedAperiodicityMax)) {
-        // PitchEstimate's contract: 0 Hz is not a guess at the pitch, it
-        // is the absence of one. Downstream, unvoiced audio passes through
-        // uncorrected, so breaths and consonants are never pitched.
-        return PitchEstimate{0.0f, 0.0f, false};
-    }
 
     // Confidence is the aperiodicity's complement, clamped because d' can
     // exceed 1 on a non-stationary window. Note it is not a loudness

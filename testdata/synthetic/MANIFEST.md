@@ -1,6 +1,6 @@
 # Synthetic ground-truth voice set — what it is and what it measures
 
-Thirty-three synthesised voice-like signals whose fundamental frequency is
+Fifty-four synthesised voice-like signals whose fundamental frequency is
 **exact by construction**, together with the per-frame f0 label tracks that
 say so. Built by `tools/synth_voices.py`. The `.wav` files are gitignored
 (regenerate in seconds); the `.f0.csv` label tracks and this file are tracked.
@@ -85,15 +85,57 @@ One variable moves per case, so a failure names its own cause.
 | Meend | `meend_350cps` … `meend_3500cps` (5) | Continuous 700-cent glides at 350/700/1500/2400/3500 cents per second. The owner's real takes run a median 345–741 c/s with excursions past 2000 (`testdata/vocals/MANIFEST.md` §5), so the set spans that band and beyond |
 | Fundamental | `weak_fundamental`, `missing_fundamental`, `even_harmonics_only`, `telephone_band` | H1 at −20 dB; H1 removed; odd harmonics removed; and a 300–3400 Hz telephone band, which is how a fundamental actually goes missing on a phone. Pins the three points of the corrected `docs/decisions/0003` finding |
 | Breathy | `breathy_hnr20db`, `_hnr10db`, `_hnr5db` | Aspiration noise mixed with the pulse train at 20 / 10 / 5 dB harmonics-to-noise ratio |
+| **Odd-harmonic attenuation** | `oddweak_06db_262hz` … `oddweak_30db_330hz` (21) | **Added by T1.8.** Every ODD harmonic attenuated *together* — 6/12/15/18/21/24/30 dB below the envelope its even neighbours trace — at 261.63, 293.66 and 329.63 Hz. The diplophonic voice `docs/decisions/0010` measured on take04, and the one condition the set could not previously produce. See §3a |
 | Voicing | `voicing_alternating`, `voicing_noisefloor` | Silence / voiced / unvoiced-fricative alternation, over true digital silence and over a −55 dBFS floor. The real set is entirely sung and contains **no** silence, so AC6 and FR2 were previously measured on the easy half of the problem |
+
+### 3a. The odd-harmonic attenuation family, and the gap it fills
+
+`weak_fundamental` attenuates H1 alone; `missing_fundamental` removes it;
+`even_harmonics_only` removes every odd harmonic. It looks like a complete
+sweep and it is not, and T1.2 already measured why (`docs/lessons.md` L4):
+removing H1 creates **no octave ambiguity at all**, because H3 and H5 survive
+at full strength and odd harmonics *invert* at the half period rather than
+repeating there. So the first two cases sit at one end (unambiguous) and the
+third at the other (P/2 genuinely is the period). **Nothing was in between.**
+
+take04's failing passage is exactly the middle: every odd harmonic pushed down
+*together*, by a finite 14–20 dB, carrying 1–4% of the frame's energy
+(`docs/decisions/0010` §3). Split the waveform into its even part E and its odd
+part O: E repeats every P/2, while O(t + P/2) = −O(t). So
+
+```
+d(P/2) = Σ (x[j] − x[j+P/2])² = Σ (2·O[j])² = 4·W·energy(O)
+d'(P/2) ≈ 2 × (odd-harmonic energy fraction)
+```
+
+Once the odd harmonics drop below ~5% of the energy, `d'(P/2)` falls under
+YIN's 0.1 threshold and step 3's first-crossing walk stops at the **half**
+period. The family sweeps straight through that boundary:
+
+| Attenuation | odd energy fraction (measured on the emitted audio) | what it is |
+|---|---|---|
+| 6 dB | 14–32% | clearly periodic at P |
+| 12 dB | 4–10% | the boundary; fails at 330 Hz only |
+| 15 dB | 2–5% | straddles it; fails at 294 and 330 Hz |
+| 18–24 dB | 0.3–3% | **take04's measured condition** |
+| 30 dB | 0.1–0.2% | approaching `even_harmonics_only` — genuinely near-periodic at P/2 |
+
+The fundamental sweeps 262–330 Hz because that is where the real failure lives:
+5404 of take04's frames sit at 260–320 Hz and carry a 10.25% octave-high rate,
+against 0.26% below 260 Hz. One note would have measured one note.
+
+**The ground truth is untouched by any of this.** Attenuating a harmonic scales
+it; it does not move it. The label is still the phase accumulator's own
+per-sample f0 — and §4's Method C measures the attenuated fundamental's actual
+frequency back out of the emitted audio to prove it.
 
 `even_harmonics_only` is the one case whose correct answer is **not** f0. An
 even-harmonics-only waveform genuinely repeats at P/2, so reporting 2·f0 is
 right; only human perception insists on the missing fundamental. It is excluded
 from the pooled figures in section 5 and kept as a behaviour pin.
 
-Audio: 48 kHz mono 32-bit float, peak-normalised to 0.7, 1.5 s (steady) or
-2.5–3.0 s (everything else). Label tracks use the same geometry as
+Audio: 48 kHz mono 32-bit float, peak-normalised to 0.7, 1.5 s (steady notes and
+the odd-attenuation family) or 2.5–3.0 s (everything else). Label tracks use the same geometry as
 `testdata/vocals/*.f0.csv` — `time_s` at the centre of a 2048-sample window,
 256-sample hop — so `tools/score_detectors.py` consumes both sets unchanged.
 
@@ -152,12 +194,56 @@ Method B assumes periodicity, so it is not the authority on the jitter cases; a
 jittered signal is not periodic and its correlation peak is not defined to a
 cent. Method A carries those.
 
+**Method C — heterodyne phase slope on one harmonic** (added by T1.8, because
+**A and B both fail on the odd-attenuation family, and they fail in exactly the
+way the detector under test fails**). With the odd harmonics 18 dB down the
+source crosses its own mean twice per cycle, so Method A counts double; and the
+correlation at P/2 reaches ~0.99 of the correlation at P, so Method B's
+"shortest peak within 95% of the best" locks to the half period. Both would
+report +1200 cents. Neither is a check on a detector that makes the same
+mistake.
+
+So Method C does not ask what the period is. It asks the narrower question the
+ground truth actually rests on: **is there a partial at exactly `k·f0`?** The
+spectrum is shifted down by `k·f0`, what lands near DC is low-passed, and a
+straight line is fitted to the unwrapped phase. A flat phase means the partial
+sits exactly where the label says; a slope of ω rad/s means it is ω/2π Hz away.
+
+| Control | Result |
+|---|---|
+| **positive** — steady 65–262 Hz, where A and B already agree | 0.000000 – 0.000005 cents |
+| **negative** — `even_harmonics_only`, asked about H1, which is *exactly zero* | **+1200.000002 cents**, i.e. it finds H2 and says so |
+| **negative** — reference at 1.5·f0, where no partial exists | +498.04 cents, i.e. it lands on H2 |
+| odd-attenuation family, H1, all 21 cases | 0.000000 – 0.000010 cents, coherence 1.0000 |
+
+The negative controls are the point. "Reference an octave low" would *not* be
+one — heterodyning a voice at 2·f0 lands H2 at DC, H2 is really there, and the
+method correctly answers zero. What has to be shown is that it says something
+**different** when the partial it was asked about is absent, and it does: on a
+signal with no H1 the identical call returns +1200, not 0. A method that
+returned a comforting zero regardless would have certified the family's ground
+truth without measuring it (`docs/lessons.md` L5;
+`docs/assumption-log.md` pattern B).
+
+Method C also reports a **coherence** — the fraction of the band-limited energy
+the fitted component explains — so a sub-millicent answer produced by measuring
+nothing at all cannot pass unnoticed. It is 1.0000 on every family case.
+
 **Worst error anywhere: 0.08 cents, and that one is an artefact of the
 measuring method.** The set's labels are good to roughly 1/100 of a cent —
 three orders of magnitude tighter than AC2's ±15 cent bar, and about 1000×
 tighter than the real set's ~10 cent label spread.
 
 ## 5. Measured detector results
+
+> **The numbers in §5 below are the T1.0 measurement, before D10 and before
+> T1.8, and they are kept as the record of what was found then. They are
+> superseded twice over.** D10 made step 3's threshold relative
+> (`docs/decisions/0009`) and took AC7 on the 32 original scored cases from
+> 1.34% to **0.000%** and AC2 from 93.99% to **96.10%**. T1.8 added the
+> odd-attenuation family and the octave-doubling repair; its measurements are
+> in **§5a**, which is the current state of this set.
+
 
 `opentune-f0dump` (Release build) over every case, scored by
 `tools/score_detectors.py --labeldir testdata/synthetic --cases …`. Full
@@ -259,6 +345,116 @@ only on easy material.
 exactly the first-qualifying-peak bias `docs/decisions/0003` predicted and
 inverted from YIN's. In each case a strong harmonic sits on or near F1. It also
 reads −14.4 cents at 988 and 1100 Hz, consistent with the T1.1 baseline.
+
+## 5a. T1.8 — the odd-attenuation family and the octave-doubling repair
+
+Current numbers. `opentune-f0dump` (Release), scored at the D11-corrected
+30.79 ms alignment, `even_harmonics_only` excluded from every aggregate (it is
+a behaviour pin — see the note under §3).
+
+**Octave rates are reported SIGNED throughout** (`docs/lessons.md` L6): an
+unsigned rate sums two populations whose repairs point in opposite directions,
+and that mistake cost D12 an hour of investigation.
+
+### What the family showed before any engine change
+
+| Set | frames | median &#124;err&#124; | ≤15 c | octave **high** | octave **low** |
+|---|---|---|---|---|---|
+| 32 pre-existing scored cases | 11 537 | 0.17 c | 96.100% | 0.000% | 0.000% |
+| **new odd-attenuation family (21)** | 5 733 | **1200.28 c** | 28.571% | **71.429%** | 0.000% |
+| `even_harmonics_only` (pin) | 460 | 1200.07 c | — | 100% *(correct)* | — |
+
+**The set could score a perfect 0.000% and be blind to the failure carrying 82%
+of the real-material octave errors.** That is the finding, and it is the reason
+the family exists. Per case, the boundary is sharp and graded exactly as the
+mechanism predicts — `d'(P/2) ≈ 2 × odd-harmonic energy fraction`, so the
+failure begins where that crosses YIN's 0.1 threshold:
+
+| | 262 Hz | 294 Hz | 330 Hz |
+|---|---|---|---|
+| 6 dB | 0% | 0% | 0% |
+| 12 dB | 0% | 0% | **100%** |
+| 15 dB | 0% | **100%** | **100%** |
+| 18 / 21 / 24 / 30 dB | **100%** | **100%** | **100%** |
+
+### After the repair (`YinDetector` step 3b, T1.8)
+
+| Set | frames | median &#124;err&#124; | ≤15 c | octave high | octave low |
+|---|---|---|---|---|---|
+| 32 pre-existing scored cases | 11 537 | **0.17 c** | **96.100%** | **0.000%** | **0.000%** |
+| odd-attenuation family, 6–24 dB (18 cases) | 4 914 | 0.01 c | 99.9% | **0.142%** | 0.000% |
+| odd-attenuation family, 30 dB (3 cases) | 819 | 1200.16 c | 0% | **100%** | 0.000% |
+| family, all 21 | 5 733 | 0.01 c | 85.592% | 14.408% | 0.000% |
+| `even_harmonics_only` (pin) | 460 | 1200.07 c | — | 100% *(unchanged — correct)* | — |
+
+**The 32 pre-existing cases are bit-identical**: same median, same ≤15 c, same
+0.000%. That was the binding constraint — every one of the eight step-3 variants
+`docs/decisions/0010` measured broke it.
+
+**The 30 dB cases are not repaired, and that is where the repair's reach ends.**
+At 30 dB the odd harmonics carry 0.1–0.2% of the energy and the waveform repeats
+at P/2 to within about two parts in a thousand; the confirmation the repair
+requires at the fourth multiple no longer holds, because what is left at 2P and
+4P is dominated by fractional-lag quantisation rather than by signal. This is
+the approach to `even_harmonics_only`, where reporting 2·f0 becomes correct. It
+is reported as a failure here, not explained away: at 30 dB the true period is
+still P and the detector still says 2·f0.
+
+### The real takes — measured, and still failing AC7
+
+Both runs are the same Release binary with only `kOctaveDoubleMax` changed
+(0.0 disables the repair entirely), so nothing else differs. The baseline column
+reproduces `docs/decisions/0010`'s recorded figures to the last digit on all six
+takes, which is what licenses the comparison.
+
+| take | frames | octave high | | octave low | | total | |
+|---|---|---|---|---|---|---|---|
+| | | base | fixed | base | fixed | base | fixed |
+| take01 | 4 703 | 0.21% | **0.09%** | 0.34% | 0.34% | 0.55% | **0.43%** |
+| take02 | 5 663 | 0.00% | 0.00% | 1.73% | 1.75% | 1.73% | **1.75%** ← the one regression |
+| take03 | 5 365 | 0.26% | 0.26% | 0.75% | 0.75% | 1.01% | 1.01% |
+| take04 | 7 774 | 7.78% | **3.16%** | 3.11% | **4.36%** | 10.90% | **7.53%** |
+| take05 | 3 567 | 0.00% | 0.00% | 0.03% | 0.03% | 0.03% | 0.03% |
+| take06 | 6 248 | 0.37% | **0.14%** | 0.69% | 0.69% | 1.06% | **0.83%** |
+| **pooled** | **33 320** | **1.96%** | **0.82%** | **1.32%** | **1.61%** | **3.28%** | **2.43%** |
+
+**AC7 still fails on real material**, at 2.43% against a <1% bar — a 26%
+relative improvement, not a pass, and it must not be quoted as one. Octave-high
+fell by 58%; octave-low rose by 0.29 points. take02 is 0.02 points worse — one
+frame — and is recorded as a regression rather than rounded away.
+
+Fine accuracy improved as a side effect and was not traded against: pooled
+≤15 cents went 89.05% → 89.89%, and take04's median absolute error 3.77 → 3.45
+cents.
+
+**Voicing is bit-identical.** The repair runs after step 5's gate, on frames
+already decided voiced, so recall, AC6 and the scored denominator cannot move —
+the frame counts above are the same in both columns for that reason. This is
+the way an octave rate is most easily faked (`docs/decisions/0009`), and the
+ordering forecloses it structurally rather than by measurement.
+
+### Is the extra octave-low real, or is it the labels?
+
+Asked with the instrument built for it: `tools/d12_octave_evidence.py`, which
+judges a disputed frame on the **magnitude spectrum alone** — evidence
+independent of YIN and of all three labelling estimators — after calibrating
+itself against in-domain positive and negative controls. On take04:
+
+| | baseline | fixed |
+|---|---|---|
+| frames agreeing with the label within 50 c | 6 614 | **6 877** |
+| octave-disputed frames | 847 | **585** |
+| … the evidence favours the **label** (YIN wrong) | 428 | **334** |
+| … the evidence favours **YIN** (label wrong) | 48 | 49 |
+| … ambiguous | 371 | 202 |
+
+Two things follow, and the second is unwelcome. The improvement is **real
+frames becoming correct** — 263 more frames now agree with the label, and the
+frames independent evidence says YIN gets wrong fell 428 → 334. But of the 339
+remaining frames where YIN reads LOW, the evidence favours the label on 245
+(72.3%) and YIN on only 12 (3.5%): **the new octave-low errors are genuine
+detector errors, not label disagreements.** The 0.29 pooled points are a real
+cost, paid for a 1.14-point gain.
 
 ## 6. What this set is NOT
 
