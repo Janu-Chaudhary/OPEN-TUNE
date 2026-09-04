@@ -277,10 +277,17 @@ to 0.08 cents — roughly 1000x tighter than the tolerance being tested:
 Excludes the `even_harmonics_only` case, which is a behaviour pin rather than a test: that signal
 genuinely repeats at P/2, so reporting 2·f0 is correct (see `docs/decisions/0003`).
 
-**AC7 is not yet met on real recordings** — 3.28% across the owner's six takes, concentrated in
-one (take04 at 10.90%, every other take ≤1.73%). Tracked as D12. Whether take04's *labels* are
-octave-correct there is itself unestablished, since they come from window-based estimators that
-share the period-doubling ambiguity they are being used to judge.
+**AC7 is not met on real recordings — 2.43%, against a <1% bar.** Stage 1 closed with this
+criterion outstanding, deliberately and on the record. What is established: the errors are genuine
+detector errors, not label artifacts (independent spectral adjudication favours the labels ~9:1
+where decisive, `docs/decisions/0010`); they are octave-**high**, concentrated at 260–320 Hz; the
+mechanism is diplophonia, and step 3b (`0011`) halved that half — 1.96% → 0.82% — while
+octave-low rose 1.32% → 1.61%. take04 went 10.90% → 7.53%.
+
+**The bar itself is now in question.** No label source available to this project is
+octave-reliable, and 27.7% of the remaining disputed frames favour the detector over the label.
+AC7 on real material may be measuring the labels as much as the detector. Tracked as D13, and not
+answerable without a listening checkpoint.
 
 The original note stands as the reason the synthetic set had to exist:
 

@@ -233,7 +233,14 @@ That list is the agenda for Stages 1 and 2.
 - [x] **T1.7** — Voiced/unvoiced decision from the aperiodicity measure (AC6). Silence
   aperiodicity 1.0, white noise 0.907–0.929 across 5 seeds, clean sine <0.01; threshold 0.2,
   provisional pending T1.8. A quiet-sine test proves confidence is not a disguised loudness meter
-- [~] **T1.8** — Verify AC1, AC2, AC7 against a labelled vocal set. **Split, 2026-09-04. Synthetic: all four criteria PASS. Real recordings: AC7 outstanding (D12), AC2 unmeasurable there by construction.**
+- [x] **T1.8** — Verify AC1, AC2, AC7 against a labelled vocal set. **Closed 2026-09-04 with one
+  criterion unmet, deliberately and documented.** Synthetic (exact ground truth): AC1 0.21 ¢,
+  AC2 96.10%, AC6 0.00%, AC7 0.000% — all four PASS. Real recordings: **AC7 is 2.43% against a
+  <1% bar and does not pass.** It is not being closed as met; it is being closed as *understood*,
+  with the mechanism diagnosed to the frame (`docs/decisions/0010`, `0011`), the fix that halved
+  the octave-high half shipped, and the residue's cost measured rather than estimated. AC2 remains
+  unmeasurable on real recordings by construction — those labels are ~10 ¢ precise against a
+  ±15 ¢ tolerance (`docs/decisions/0008`).
   - **AC1 — PASSED.** YIN measures 0.002–0.375 cents across 65–1099 Hz against a ±5 cent bar
     (controller-verified). Autocorrelation reaches −14.4 cents.
   - **AC7 — FAILS, and is actionable.** 8.08% octave errors overall, 14.25% on take04, against
@@ -480,7 +487,10 @@ performers, not this user.
   NOT explain the velocity gradient** — re-running decision 0008's bins at both offsets moves them
   under 2 points. Source: synthetic set, T1.0.
 
-- [ ] **D12 — real-take AC7 is 3.19%, and take04 carries 82% of it.** D10 took the real set from
+- [x] **D12 — real-take AC7 is 3.19%, and take04 carries 82% of it.** *(resolved — the labels are
+  right and YIN is wrong; `docs/decisions/0010`. Partially repaired by step 3b, `0011`: pooled
+  3.28% → 2.43%, take04 10.90% → 7.53%. Still above the bar — see D13.)*
+  ORIGINAL ENTRY:** D10 took the real set from
   8.08% to 3.19%, a genuine improvement on matched frames (2434 → 1062 octave errors), but not
   under AC7's 1% bar. Re-measured on the corrected D11 offset: take04 10.90%, take02 1.73%,
   take06 1.06%, take03 1.01%, take01 0.55%, take05 0.03% — five of six within touching distance
@@ -489,6 +499,19 @@ performers, not this user.
   own labels are octave-correct there (a 2-of-3 consensus of window-based estimators shares the
   period-doubling ambiguity it is being used to judge), whether the synthetic set covers its worst
   passages, and what the residual mechanism actually is.
+
+- [ ] **D13 — AC7 remains unmet on real recordings at 2.43%, and the bar itself is now in
+  question.** Step 3b (`docs/decisions/0011`) took octave-high from 1.96% to 0.82% while
+  octave-low rose 1.32% to 1.61%; independent spectral adjudication says those extra low errors
+  are genuine (72.3% favour the label). Two open questions, and the second may matter more:
+  1. **The 30 dB odd-attenuation cases are unrepaired** — at that depth the signal is arguably
+     closer to genuinely periodic at P/2, so declining to promote may be *correct* rather than a
+     failure. Unproven by ear.
+  2. **Is <1% the right bar for real recordings at all?** No label source available to this
+     project is octave-reliable, and 27.7% of the remaining disputed frames favour the detector
+     over the label. AC7 may currently be measuring the labels as much as the detector.
+  Needs a listening checkpoint on take04 45–50 s before either is answerable — nobody has heard
+  the passage that this entire line of work is about.
 
 *Seven further minor review findings are held in `.superpowers/sdd/tasks/progress.md`
 for the whole-branch review at the end of Stage 0.*

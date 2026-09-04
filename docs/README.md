@@ -37,6 +37,7 @@ either should be, or should not exist.
 | 0008 | AC7 fails and is fixable; AC2 is not measurable with algorithm-derived labels |
 | 0009 | YIN's absolute threshold made relative — the fix for every octave error (D10) |
 | 0010 | take04's AC7 excess is a real detector error; no step-3 rule fixes it without regressing synthetic (D12) |
+| 0011 | Confirm the chosen lag against its even multiples (step 3b) — the diplophonia fix |
 
 ## Guards
 
