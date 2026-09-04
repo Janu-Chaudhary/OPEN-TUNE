@@ -20,7 +20,6 @@ target_include_directories(opentune PUBLIC
 # edit vendored files.
 target_include_directories(opentune SYSTEM PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party
-    ${CMAKE_SOURCE_DIR}/third_party/signalsmith-linear/include
 )
 target_link_libraries(opentune PRIVATE opentune_warnings)
 add_library(opentune::engine ALIAS opentune)

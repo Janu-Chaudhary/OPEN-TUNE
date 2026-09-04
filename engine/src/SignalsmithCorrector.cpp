@@ -9,6 +9,7 @@
 #include "signalsmith-stretch/signalsmith-stretch.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace opentune {
 
@@ -102,44 +103,87 @@ SignalsmithCorrector::SignalsmithCorrector() = default;
 // translation unit -- the standard pimpl requirement.
 SignalsmithCorrector::~SignalsmithCorrector() = default;
 
-void SignalsmithCorrector::prepare(double sampleRate, int /*maxBlockSize*/) {
+void SignalsmithCorrector::prepare(double sampleRate, int maxBlockSize) {
     m_impl = std::make_unique<Impl>();
 
     // --- Preset choice, and why -----------------------------------------
     //
-    // Signalsmith Stretch ships two presets:
-    //   presetDefault(channels, sampleRate)  -> block = 0.12 * sampleRate,
-    //                                            interval = 0.03 * sampleRate
-    //   presetCheaper(channels, sampleRate)  -> block = 0.10 * sampleRate,
-    //                                            interval = 0.04 * sampleRate
-    // Both are tuned by the library's author for quality on typical
+    // Signalsmith Stretch ships two presets (block/interval are fractions
+    // of sampleRate; `splitComputation` is each preset's own default, NOT
+    // "off" for both -- getting this backwards is exactly the bug fix round
+    // 1 caught here, see below):
+    //   presetDefault(channels, sampleRate)
+    //       -> block = 0.12 * sampleRate, interval = 0.03 * sampleRate,
+    //          splitComputation defaults to FALSE
+    //   presetCheaper(channels, sampleRate)
+    //       -> block = 0.10 * sampleRate, interval = 0.04 * sampleRate,
+    //          splitComputation defaults to TRUE
+    // Both are tuned by the library's author for quality/CPU on typical
     // material, not for a latency budget. AC4 (specs.md) caps the *whole*
     // pipeline at 20 ms, and T2.5/T3.8 will hold us to it once this runs
     // live. Stage 0 is offline (a WAV in, a WAV out -- no live monitoring
-    // yet), so nothing breaks today either way, but accepting the
-    // higher-latency default here would be "solving" Stage 0's problem by
-    // quietly creating Stage 3's -- exactly what docs/decisions/0005 warns
-    // against ("the preset choice is a real decision, not a default to
-    // accept").
+    // yet), so nothing breaks today either way, but accepting a
+    // higher-latency configuration here would be "solving" Stage 0's
+    // problem by quietly creating Stage 3's -- exactly what
+    // docs/decisions/0005 warns against ("the preset choice is a real
+    // decision, not a default to accept").
     //
-    // We choose presetCheaper: it is the library's own lower-latency
-    // preset (smaller analysis block, larger hop), and it is still a
-    // *named, documented, library-provided* configuration rather than an
-    // untested hand-picked block/interval pair -- which matters here
-    // because we are not yet tuning for a specific quality target, only
-    // making sure Stage 0's listening checkpoint is possible at all
-    // (docs/decisions/0005). Its actual latency, measured (not estimated)
-    // via the library's own inputLatency()/outputLatency() below, is
-    // recorded in the T0.13/T0.14 report; it is expected to still exceed
-    // the 20 ms AC4 budget, and that gap is exactly what T2.5 (latency
-    // accounting) and T3.8 (verify <= 20 ms, likely via a smaller custom
-    // .configure() once we're tuning for real-time rather than offline
-    // quality) exist to close. `splitComputation` is left at its default
-    // (false): that flag trades one extra interval of latency to smooth
-    // out CPU spikes for a live audio thread, which is irrelevant to an
-    // offline WAV-in/WAV-out run and would only make the latency number
-    // above worse for no benefit yet.
-    m_impl->stretch.presetCheaper(1, static_cast<float>(sampleRate));
+    // `configure()`'s block/interval sizes are plain integer sample counts,
+    // not tied to either named preset, so a future task tuning for a real
+    // latency budget (T2.5/T3.8) has a continuous knob available rather
+    // than being stuck choosing between only these two presets. That
+    // tuning is out of this task's scope -- Stage 0 only needs the
+    // checkpoint to be audible, not real-time-tight -- so it is left for
+    // T2.5/T3.8 to do deliberately, against a measured budget, rather than
+    // guessed at here.
+    //
+    // `presetCheaper` is named for being cheaper in CPU (a larger hop means
+    // fewer FFTs per second), NOT for latency: its own default
+    // `splitComputation = true` adds one whole extra interval (1920
+    // samples at 48 kHz, 40 ms) of output latency to smooth CPU spikes
+    // across a live audio thread -- a real, valuable trade for Stage 3's
+    // real-time host, but pure cost with no offsetting benefit for this
+    // offline, one-shot WAV-in/WAV-out run, which has no audio thread to
+    // protect from spikes. So we call `presetCheaper(1, sampleRate,
+    // false)`, explicitly overriding that default: block = 0.10 *
+    // sampleRate, interval = 0.04 * sampleRate, no split-computation
+    // latency tax. At 48 kHz this measures out to `latencySamples() ==
+    // blockSamples() == 4800` (100 ms) -- genuinely below `presetDefault`'s
+    // 120 ms, which is the actual basis for preferring this preset (not
+    // its name). Recorded in the T0.13/T0.14 report; still expected to
+    // exceed the 20 ms AC4 budget, and that gap is exactly what T2.5
+    // (latency accounting) and T3.8 (verify <= 20 ms, likely via a smaller
+    // custom `.configure()` per the paragraph above) exist to close.
+    m_impl->stretch.presetCheaper(1, static_cast<float>(sampleRate), false);
+
+    // --- maxBlockSize guard ----------------------------------------------
+    //
+    // process() hands whatever it's given straight to the library's own
+    // process(), which internally copies input in chunks no larger than
+    // `blockSamples() + intervalSamples()` per call (see the allocation
+    // audit's discussion of `copyInput()` -- that sum is exactly the
+    // capacity its internal `tmpProcessBuffer` was reserved to). If a
+    // caller ever handed us a single block larger than that, the "no
+    // reallocation" property this whole file is about would no longer
+    // hold for that call: `resize()` would be asked to grow past capacity,
+    // which is exactly the constitution II breach this class exists to
+    // avoid. specs.md section 6 says block size is 256 nominal, so this
+    // never binds in practice (256 is a small fraction of the 4800 + 1920
+    // = 6720-sample capacity presetCheaper(false) gives us at 48 kHz), but
+    // "never happens under the documented contract" is not the same as
+    // "cannot happen," so it is checked here rather than merely assumed.
+    // This is setup code (constructors/prepare(), per engine/CLAUDE.md's
+    // table), so throwing is allowed -- unlike process(), which never
+    // reads this value at all.
+    const int perCallCapacity =
+        static_cast<int>(m_impl->stretch.blockSamples() + m_impl->stretch.intervalSamples());
+    if (maxBlockSize > perCallCapacity) {
+        throw std::invalid_argument(
+            "SignalsmithCorrector::prepare: maxBlockSize exceeds the configured "
+            "per-call capacity (blockSamples() + intervalSamples()); process() "
+            "would ask the library to grow a buffer it sized once in configure(), "
+            "which constitution II forbids");
+    }
 
     // Initial transpose factor: 1.0 (no shift) until the first process()
     // call sets a real one. Configured here, not left implicit, so

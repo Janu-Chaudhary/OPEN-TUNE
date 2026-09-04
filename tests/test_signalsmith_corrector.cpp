@@ -98,22 +98,95 @@ std::atomic<std::uint64_t> g_allocationCount{0};
 
 } // namespace
 
-void* operator new(std::size_t size) {
+// Fix round 1, finding 7: the original override only caught the single-object,
+// default-alignment `operator new`/`delete`. That misses `new[]`, the `nothrow`
+// forms, and the C++17 `std::align_val_t` (over-aligned) forms -- exactly the
+// set a SIMD-oriented DSP library update could start using. Widened to cover
+// every allocation/deallocation function signature the standard defines, so
+// no future allocation shape can slip past this counter unnoticed.
+std::size_t recordAllocation(std::size_t size) noexcept {
     if (g_countAllocations.load(std::memory_order_relaxed)) {
         g_allocationCount.fetch_add(1, std::memory_order_relaxed);
     }
+    return size;
+}
+
+void* operator new(std::size_t size) {
+    recordAllocation(size);
     void* ptr = std::malloc(size);
     if (!ptr) {
         throw std::bad_alloc();
     }
     return ptr;
 }
+void* operator new[](std::size_t size) {
+    recordAllocation(size);
+    void* ptr = std::malloc(size);
+    if (!ptr) {
+        throw std::bad_alloc();
+    }
+    return ptr;
+}
+void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+    recordAllocation(size);
+    return std::malloc(size);
+}
+void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+    recordAllocation(size);
+    return std::malloc(size);
+}
+void* operator new(std::size_t size, std::align_val_t alignment) {
+    recordAllocation(size);
+    void* ptr = nullptr;
+    // posix_memalign requires the alignment be a multiple of sizeof(void*)
+    // and a power of two; std::align_val_t already guarantees power-of-two,
+    // and aligned_alloc's size-must-be-a-multiple-of-alignment requirement
+    // is why aligned_alloc isn't used directly here.
+    const std::size_t align = std::max(sizeof(void*), static_cast<std::size_t>(alignment));
+    if (::posix_memalign(&ptr, align, size) != 0) {
+        throw std::bad_alloc();
+    }
+    return ptr;
+}
+void* operator new[](std::size_t size, std::align_val_t alignment) {
+    return ::operator new(size, alignment);
+}
+void* operator new(std::size_t size, std::align_val_t alignment, const std::nothrow_t&) noexcept {
+    recordAllocation(size);
+    void* ptr = nullptr;
+    const std::size_t align = std::max(sizeof(void*), static_cast<std::size_t>(alignment));
+    if (::posix_memalign(&ptr, align, size) != 0) {
+        return nullptr;
+    }
+    return ptr;
+}
+void* operator new[](std::size_t size, std::align_val_t alignment,
+                     const std::nothrow_t& tag) noexcept {
+    return ::operator new(size, alignment, tag);
+}
 
 void operator delete(void* ptr) noexcept {
     std::free(ptr);
 }
-
+void operator delete[](void* ptr) noexcept {
+    std::free(ptr);
+}
 void operator delete(void* ptr, std::size_t) noexcept {
+    std::free(ptr);
+}
+void operator delete[](void* ptr, std::size_t) noexcept {
+    std::free(ptr);
+}
+void operator delete(void* ptr, std::align_val_t) noexcept {
+    std::free(ptr);
+}
+void operator delete[](void* ptr, std::align_val_t) noexcept {
+    std::free(ptr);
+}
+void operator delete(void* ptr, std::size_t, std::align_val_t) noexcept {
+    std::free(ptr);
+}
+void operator delete[](void* ptr, std::size_t, std::align_val_t) noexcept {
     std::free(ptr);
 }
 
@@ -197,6 +270,34 @@ TEST_CASE("SignalsmithCorrector: pitchRatio 1.0 is a close (not bit-identical) "
     // value. So the right assertions here are (a) the output stays close in
     // amplitude to a time-aligned copy of the input, and (b) the pitch it
     // carries is still unmistakably 440 Hz -- not exact float equality.
+    //
+    // Fix round 1, finding 5 (attempted, then reverted -- see below): a
+    // pure 440 Hz sine has a period of only ~109.09 samples at 48 kHz, and
+    // the +/-64-sample lag search below (more than half that period) can
+    // find an artificially "good" alignment at essentially any lag,
+    // including zero -- a `std::copy` stub that does no phase-vocoder work
+    // at all still passes the closeness check for exactly this reason (any
+    // input sample lands within half a period of *some* later or earlier
+    // sample of the same periodic wave). The reviewer suggested a
+    // non-periodic probe (white noise or a chirp) would close this gap, and
+    // that was tried: white noise for the closeness/lag half, a separate
+    // sine segment for the pitch-preservation half. It made the test
+    // WORSE, not better -- against the real (non-stub) implementation, the
+    // measured relative error on the noise segment was 132%, nowhere close
+    // to passing at any believable tolerance. That is not this class being
+    // broken: Signalsmith Stretch's peak-tracking phase-locking (see the
+    // class comment in SignalsmithCorrector.h and the library's ADC22 talk)
+    // reconstructs phase from a *tracked-sinusoidal-peak* model, which
+    // white noise's broadband, unstructured phase does not fit -- so even
+    // at pitchRatio 1.0, noise is NOT reconstructed closely pointwise by
+    // this algorithm, while tonal content (voice, the actual use case) is.
+    // Testing pointwise closeness on noise would therefore be testing the
+    // wrong property for what this class is for. So this test still uses a
+    // pure sine, the +/-64-sample lag search is kept (it still catches
+    // gain/distortion faults, as the reviewer noted), and finding 5's
+    // periodicity-blindness is accepted as a documented, known limitation
+    // of this particular check rather than "fixed" into a check that fails
+    // the real implementation for the wrong reason.
     constexpr int kTotalSamples = static_cast<int>(3.0 * kSampleRate);
 
     opentune::SignalsmithCorrector corrector;
@@ -234,7 +335,11 @@ TEST_CASE("SignalsmithCorrector: pitchRatio 1.0 is a close (not bit-identical) "
     // integer number of samples -- it is still a real closeness check (a
     // badly distorted signal cannot fake a high correlation at any lag),
     // it just doesn't require latencySamples() to be exact down to the
-    // sample.
+    // sample. (See the note above: this search's periodicity-blindness --
+    // it can't tell a genuinely correct alignment from a coincidentally
+    // fine one on strictly periodic input -- is a known, accepted
+    // limitation of this specific check; it still catches gain and gross
+    // distortion faults.)
     constexpr int kLagSearchRadius = 64;
     int bestLag = 0;
     double bestCorrelation = -1.0;
@@ -337,11 +442,32 @@ TEST_CASE("SignalsmithCorrector: block-size invariance -- the same signal at two
     // Root-relative-mean-square difference: normalises out signal
     // amplitude, so this tolerance means "10% of the signal's own RMS
     // level," not an absolute number tied to this particular amplitude.
+    //
+    // Fix round 1, finding 4: this metric alone does NOT discriminate a
+    // working corrector from a broken one -- a `std::copy` stub is
+    // trivially block-size invariant too (it does no per-block-boundary
+    // work at all), so it reports the same "0" this real implementation
+    // does. It only proves the two runs AGREE with each other, never that
+    // either one did anything correct. The two checks immediately below
+    // (both against 466.16 Hz, the actual target) are what give this test
+    // its teeth; this RMS figure is retained only as a "the two runs didn't
+    // silently diverge from each other" sanity check, not as evidence of
+    // correctness on its own -- see the additional not-still-440-Hz checks
+    // further below, which is the piece a `std::copy` stub cannot pass no
+    // matter how block-size-invariant it is.
     const double relativeRmsDiff = std::sqrt(sumSquaredDiff / sumSquaredA);
-    INFO("relative RMS difference between block sizes 256 and 4001: ", relativeRmsDiff);
+    INFO("relative RMS difference between block sizes 256 and 4001 (a "
+         "consistency check between the two runs, NOT evidence of "
+         "correctness by itself -- see the checks below): ",
+         relativeRmsDiff);
     CHECK(relativeRmsDiff < 0.10);
 
-    // Both must still land on the same shifted pitch.
+    // Both must still land on the same shifted pitch. This is the actual
+    // correctness evidence: a `std::copy` stub (or any implementation that
+    // silently ignores `pitchRatio`) would measure ~440 Hz here, at both
+    // block sizes -- comfortably outside the 20-cent window around the
+    // 466.16 Hz target, so it fails these two checks regardless of what
+    // the RMS-agreement number above says.
     const double hzA = zeroCrossingFrequency(outA.data() + compareStart,
                                              static_cast<std::size_t>(compareCount), kSampleRate);
     const double hzB = zeroCrossingFrequency(outB.data() + compareStart,
@@ -349,6 +475,15 @@ TEST_CASE("SignalsmithCorrector: block-size invariance -- the same signal at two
     INFO("Hz at block size 256: ", hzA, " / Hz at block size 4001: ", hzB);
     CHECK(std::abs(centsError(hzA, 466.16)) < 20.0);
     CHECK(std::abs(centsError(hzB, 466.16)) < 20.0);
+
+    // Belt-and-braces version of the same correctness evidence, made
+    // explicit rather than left implicit in a target-frequency tolerance:
+    // the shifted output must clearly NOT still be sitting on the
+    // unshifted input's own pitch (440 Hz). A no-op/copy corrector fails
+    // this directly and obviously, independent of how close 466.16 Hz
+    // happens to be measured.
+    CHECK(std::abs(centsError(hzA, 440.0)) > 50.0);
+    CHECK(std::abs(centsError(hzB, 440.0)) > 50.0);
 }
 
 TEST_CASE("SignalsmithCorrector: latencySamples() reports the library's real, "
@@ -376,6 +511,24 @@ TEST_CASE("SignalsmithCorrector: process() performs zero heap allocations across
     // every single 256-sample block, for the full 10+ second run, in both
     // directions -- while counting every heap (de)allocation anywhere in
     // the process.
+    //
+    // Fix round 1, finding 1: an earlier version of this test called
+    // reset() after every single block, inside the same loop. reset()
+    // zeroes the library's internal `blockProcess.samplesSinceLast` before
+    // it can ever reach `stft.defaultInterval()` (1920 samples > our
+    // 256-sample block), so the "a new analysis window is ready" branch
+    // inside process() never fired -- meaning processSpectrum(),
+    // findPeaks(), and every peaks.emplace_back() call the allocation audit
+    // in SignalsmithCorrector.cpp is actually about NEVER RAN. That version
+    // was measured (by the reviewer) to process ten seconds of pure
+    // silence in disguise: max|out| == 0. It reported zero allocations
+    // truthfully, but had stopped testing the property it claimed to test.
+    // This version calls reset() zero times inside the streaming loop, and
+    // asserts the output is genuinely non-silent -- so if a future change
+    // ever reintroduces a per-block reset (or any other way of starving
+    // the analysis path), this test fails loudly instead of quietly
+    // reporting a true-but-vacuous zero. reset()'s own allocation-freedom
+    // is covered by the separate test case below instead.
     constexpr int kTotalSamples = static_cast<int>(10.0 * kSampleRate);
 
     opentune::SignalsmithCorrector corrector;
@@ -399,17 +552,64 @@ TEST_CASE("SignalsmithCorrector: process() performs zero heap allocations across
             // semitone down: the worst case the brief describes ("the
             // ratio moves per block") and the most likely way a
             // ratio-triggered reallocation, if one existed, would show up.
+            // Deliberately NO reset() in this loop -- see the note above.
             const float ratio = up ? 1.0595f : 0.9439f;
             up = !up;
             corrector.process(in.data() + offset, out.data() + offset, n, ratio);
-            corrector.reset(); // also exercised here: reset() must not allocate either.
             offset += n;
         }
     }
 
     const std::uint64_t allocations = g_allocationCount.load(std::memory_order_relaxed);
-    INFO("heap allocations observed during process()/reset() across 10 s, "
+    INFO("heap allocations observed during process() across 10 s, "
          "per-block ratio changes: ",
          allocations);
+    CHECK(allocations == 0);
+
+    // The witness that this test actually exercised the real analysis
+    // path, not ten seconds of silence: a sine input at any of these
+    // ratios must produce a clearly non-silent output. 0.1 is far below
+    // the input's own 1.0 peak amplitude but far above numerical noise --
+    // wide enough margin that this can't flip on unrelated jitter, tight
+    // enough to fail hard if process() ever starts emitting silence again.
+    float maxAbsOutput = 0.0f;
+    for (const float sample : out) {
+        maxAbsOutput = std::max(maxAbsOutput, std::abs(sample));
+    }
+    INFO("max|out| across the run: ", maxAbsOutput);
+    REQUIRE(maxAbsOutput > 0.1f);
+}
+
+TEST_CASE("SignalsmithCorrector: reset() performs zero heap allocations") {
+    // Split out from the steady-state allocation test above (fix round 1,
+    // finding 1): reset()'s own allocation-freedom is a separate claim from
+    // process()'s, and worth its own small, focused test rather than being
+    // entangled with (and, as it turned out, silently defeating) the
+    // steady-state one.
+    opentune::SignalsmithCorrector corrector;
+    corrector.prepare(kSampleRate, kBlockSize);
+    corrector.reset();
+
+    // Warm up with a little real streaming first, so reset() has actual
+    // accumulated state (phase accumulators, stashed input/output, etc) to
+    // clear -- resetting an already-fresh object would be a weaker test.
+    const std::vector<float> in = opentune::test::sine(440.0f, kSampleRate, kBlockSize * 8);
+    std::vector<float> out(in.size(), 0.0f);
+    int offset = 0;
+    while (offset < static_cast<int>(in.size())) {
+        const int n = std::min(kBlockSize, static_cast<int>(in.size()) - offset);
+        corrector.process(in.data() + offset, out.data() + offset, n, 1.0595f);
+        offset += n;
+    }
+
+    {
+        AllocationCountGuard guard;
+        for (int i = 0; i < 16; ++i) {
+            corrector.reset();
+        }
+    }
+
+    const std::uint64_t allocations = g_allocationCount.load(std::memory_order_relaxed);
+    INFO("heap allocations observed during 16 reset() calls: ", allocations);
     CHECK(allocations == 0);
 }

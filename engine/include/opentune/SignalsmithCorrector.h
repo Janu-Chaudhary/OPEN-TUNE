@@ -90,8 +90,15 @@ public:
     // not used to size anything here: Signalsmith Stretch's own internal
     // buffering (sized from `sampleRate` alone, in the .cpp) is chosen to
     // comfortably exceed any block size this engine's block contract
-    // produces (specs.md section 6: 256 nominal); see the .cpp for the
-    // margin and the guard that documents this assumption.
+    // produces (specs.md section 6: 256 nominal). This is an assumption,
+    // not a guarantee the library enforces on our behalf, so prepare()
+    // checks it explicitly and throws std::invalid_argument if
+    // `maxBlockSize` would ever exceed the library's own per-call capacity
+    // (`blockSamples() + intervalSamples()`, per the .cpp's allocation
+    // audit of `copyInput()`) -- prepare() is setup code, not real-time
+    // (see the class table in engine/CLAUDE.md), so throwing here is
+    // allowed and is preferable to silently truncating audio in
+    // process() later. See the .cpp for the exact check.
     void prepare(double sampleRate, int maxBlockSize) override;
 
     // Clears the corrector's internal phase-vocoder state (analysis/
