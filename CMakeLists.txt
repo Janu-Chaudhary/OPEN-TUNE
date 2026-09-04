@@ -17,6 +17,7 @@ target_compile_options(opentune_warnings INTERFACE
 
 # ---- Targets ---------------------------------------------------------------
 add_subdirectory(engine)
+add_subdirectory(tools/autotune-cli)
 
 option(OPENTUNE_BUILD_TESTS "Build the test suite" ON)
 if(OPENTUNE_BUILD_TESTS)

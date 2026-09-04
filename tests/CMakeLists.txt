@@ -12,6 +12,7 @@ add_executable(opentune_tests
     test_engine.cpp
     test_signalsmith_corrector.cpp
     test_wav_file.cpp
+    test_cli_args.cpp
 )
 target_include_directories(opentune_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/third_party/doctest
