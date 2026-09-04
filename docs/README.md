@@ -20,6 +20,7 @@ either should be, or should not exist.
 |---|---|
 | `docs/decisions/` | Decision catalogue — reasoning, not just outcome. See its README for what earns a record |
 | `docs/listening-log.md` | What human ears said at each checkpoint. Append-only. **Owner writes these; Claude cannot hear** |
+| `docs/lessons.md` | Defects caught late or nearly missed, and the practice each one changed. Append-only |
 
 ### Decisions on record
 
@@ -28,6 +29,7 @@ either should be, or should not exist.
 | 0001 | doctest as the test framework |
 | 0002 | dr_wav for WAV file I/O |
 | 0003 | First-peak rather than global-max lag selection (inverts the octave bias — bears on AC7) |
+| 0004 | Clamp the pitch ratio in the Engine, not the corrector (FR15 — the detector/corrector seam) |
 
 ## Guards
 
@@ -68,3 +70,10 @@ either should be, or should not exist.
 3. `specs.md` §1–§3, §7 — the shape of the answer
 4. `tasks.md` — where we are
 5. `docs/decisions/` — why things are the way they are
+
+## Fresh clone setup
+
+```bash
+git config core.hooksPath .githooks   # REQUIRED - identity guards are inert without it
+python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt   # analysis tooling
+```

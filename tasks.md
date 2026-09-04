@@ -84,7 +84,7 @@ is bit-identical to input.
 **Depends on:** T0.1
 **Done when:** compiles; a test asserts defaults match specs.md §7.1.
 
-### T0.9 — `Engine` wiring `[ ]`
+### T0.9 — `Engine` wiring `[x]`
 Own one of each interface. Per block: detect → quantize → compute ratio → correct.
 Unvoiced input passes through untouched (FR2). Strength is not yet applied.
 The computed ratio is **clamped** to the musical range before it reaches the
@@ -107,11 +107,31 @@ found during wave 2 combine badly at this seam:
 Both components passed review individually; the failure exists only where they meet.
 T0.9 is the first task that joins them, so the clamp belongs here.
 
-### T0.10 — WAV I/O `[ ]`
+**Done 2026-09-04** (`0e03c97`, fixed in `2b90034`). Review found the implementation sound but
+the tests non-discriminating — three of four criteria passed on the null hypothesis. Fixed and
+verified by mutation testing:
+- Replace the corrector call with a plain copy → **red** (the control assertion
+  `|outCents| < |inCents|` fires). Criterion 1 now genuinely defended.
+- Delete the unvoiced bypass → **red**. FR2 is proved by white noise with `voiced=false`,
+  not by silence, which passes either way.
+- Neuter the clamp to identity → **still green**, and that is honest: `snap(f)/f` is bounded
+  to ±50 cents, so FR15 cannot bind under Stage 0's chromatic snapping. The code and the
+  report both say so plainly rather than implying coverage that does not exist. It becomes
+  testable at Stage 4 (cross-block targets) or Stage 5 (gapped scales).
+
+The clamp bound is ±2 semitones (0.8909–1.1225), independently checked against Stage 5's
+worst case (1.5 semitones = 1.0905). `clampPitchRatio` lives in an anonymous namespace, not
+the public API.
+
+### T0.10 — WAV I/O `[x]`
 Vendor `dr_wav` into `third_party/`. Add `tools/autotune-cli/WavFile.h` — mono float
 read and write, converting from any input format.
 **Depends on:** T0.1 · **Requires approval:** first runtime dependency
 **Done when:** a written-then-read WAV round-trips bit-identically.
+**Done 2026-09-04** (`c7bb337`). dr_wav v0.14.6 vendored, verified byte-identical to
+upstream by the reviewer. `WavFile.h` is host code in `namespace opentune::host`; nothing
+under `engine/` references it (constitution IV). Vendored header is a `SYSTEM` include so
+strict warnings still apply to our own code — confirmed, not assumed.
 
 ### T0.11 — CLI tool `[ ]`
 `opentune-cli in.wav out.wav [--key C:major] [--strength 0.8]`.
@@ -218,12 +238,44 @@ That list is the agenda for Stages 1 and 2.
   implementations relied on headers they did not include: `<algorithm>` (T0.2) and
   `<cstddef>` (T0.6). One root cause, so one cleanup pass over `engine/` and
   `tests/`, not scattered fixes. Slot: end of Stage 0, with the whole-branch review.
-- [ ] **D3 — Resolve the denormal flush-to-zero rule for `ResampleCorrector`.**
-  `engine/CLAUDE.md` requires it; the corrector neither applies nor explicitly
-  waives it. Slot: Stage 3, with the real-time safety audit (T3.5).
+- [ ] **D3 — Resolve the denormal flush-to-zero rule across the engine.**
+  `engine/CLAUDE.md` requires it in `prepare()`; neither `ResampleCorrector` nor `Engine`
+  applies or explicitly waives it. `Engine` is the natural owner of a process-wide FTZ mode,
+  since it is the only class that sees the whole pipeline. Slot: Stage 3, with the real-time
+  safety audit (T3.5). Widened from `ResampleCorrector` alone after the T0.9 review.
 - [ ] **D4 — Benchmark `AutocorrelationDetector` against the block budget.**
   ~1M multiply-adds per block is constitution-safe but not proven deadline-safe
   against 5.33 ms. Already covered by T1.9; noted here so it is not forgotten.
 
-*Six further minor review findings are held in `.superpowers/sdd/tasks/progress.md`
+- [ ] **D5 — `ResampleCorrector` cannot sustain any pitch ratio ≠ 1.0 indefinitely.**
+  Above 1.0 it starves: producing *n* output samples needs *ratio × n* input samples and the
+  block contract delivers *n*, so the shortfall accumulates. Below 1.0 the read position
+  falls behind until it runs off the old end of the bounded 2048-sample history. Either way
+  it pins to one sample and every subsequent output block is a single constant value — a
+  sample-and-hold at the block rate (187.5 Hz at 48 kHz / 256), which aliases the input down
+  to a low buzz with a hard step every 5.33 ms.
+
+  **It is loud, not quiet.** Peak output after collapse is ~0.5 — full input amplitude.
+  Measured on the assembled pipeline, first constant-valued block:
+
+  | Input | Direction | Ratio | Collapses at |
+  |---|---|---|---|
+  | 435 Hz | flat | 1.0115 | 0.68 s |
+  | 415 Hz | flat | 1.0243 | 3.38 s |
+  | 445 Hz | sharp | 0.9888 | 4.84 s |
+  | 466 Hz | — | 1.0003 | not within 6.4 s |
+  | 440 Hz | in tune | 1.0000 | never (bit-identical passthrough) |
+
+  **Only an already-in-tune input survives.** Every existing test passes because the longest
+  is 0.25 s, not because any direction is safe.
+
+  This is T0.7's deliberate wrongness being worse than anticipated, not a T0.9 defect —
+  `ResampleCorrector.h` documents both mechanisms. **Blocks the Stage 0 checkpoint:** the
+  owner would be listening for chipmunk artifacts in a file that turns into a buzzing
+  staircase after a few seconds.
+  Needs an owner decision: accept and document; wrap the read position (fixes the starve,
+  leaves the drift — half a fix); or pull Stage 2's real corrector forward.
+  Source: T0.9 review probe, controller-verified.
+
+*Seven further minor review findings are held in `.superpowers/sdd/tasks/progress.md`
 for the whole-branch review at the end of Stage 0.*

@@ -179,11 +179,16 @@ exposes `prepare` / `reset` / `process` / `latencySamples`. Parameters arrive fr
 other threads via lock-free atomics.
 
 The engine clamps the pitch ratio it computes before handing it to the corrector
-(FR15). Detection is fallible — an octave error produces a ratio near 2.0 or 0.5,
-which no corrector handles gracefully and which is musically meaningless for pitch
-*correction*, where the input is at most a semitone or two from its target. The
-clamp is the engine's responsibility, not the corrector's: the corrector is told
-what ratio to apply and should not have to second-guess it.
+(FR15). The clamp is the engine's responsibility, not the corrector's: the corrector
+applies the ratio it is told, and should not have to second-guess its arguments.
+
+**Today the clamp never binds**, and the spec should not pretend otherwise. With
+chromatic nearest-note snapping the ratio is `snap(f)/f`, bounded to ±50 cents by
+construction — measured range 0.9715–1.0293. FR15 guards configurations that do not
+exist yet: Stage 4's `retuneMs` smoothing carries a pitch target across blocks, and
+Stage 5's gapped scales (pentatonic and harmonic minor have 3-semitone gaps) push
+nearest-note snapping to 1.5 semitones, ratio 1.0905. See `docs/decisions/0004`,
+which also records the incorrect reasoning FR15 was originally written on.
 
 ## 8. Functional requirements
 
@@ -203,7 +208,7 @@ what ratio to apply and should not have to second-guess it.
 | FR12 | Real-time host captures the microphone and plays corrected audio to the output |
 | FR13 | Desktop app allows recording, live monitoring, parameter adjustment, and WAV export |
 | FR14 | Android app provides the same core loop on a phone |
-| FR15 | Engine clamps the pitch ratio to a musical range before correction, so a detection octave error cannot produce garbage output |
+| FR15 | Engine clamps the pitch ratio to a musical range before correction (defence-in-depth; does not bind under Stage 0's chromatic snapping) |
 
 ## 9. Acceptance criteria
 
