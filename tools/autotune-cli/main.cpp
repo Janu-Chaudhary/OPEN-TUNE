@@ -26,8 +26,8 @@
 #include "opentune/AutocorrelationDetector.h"
 #include "opentune/Engine.h"
 #include "opentune/Params.h"
-#include "opentune/ResampleCorrector.h"
 #include "opentune/ScaleQuantizer.h"
+#include "opentune/SignalsmithCorrector.h"
 
 #include <cstddef>
 #include <cstdlib>
@@ -89,12 +89,22 @@ int main(int argc, char** argv) {
     opentune::AutocorrelationDetector
         detector; // naive autocorrelation (Stage 1 replaces with YinDetector)
     opentune::ScaleQuantizer quantizer(params.scale);
-    // Naive, deliberately-wrong corrector (see ResampleCorrector.h) -- it
-    // resamples, which shifts pitch AND formants (the "chipmunk" effect) and
-    // drifts duration. A concurrent task is landing SignalsmithCorrector
-    // (Stage 2, formant-preserving); swapping it in is meant to be exactly
-    // this one line changed, nothing else in this file:
-    opentune::ResampleCorrector corrector;
+    // The real corrector. Signalsmith Stretch is an STFT phase-vocoder: it
+    // analyses short overlapping windows of the signal, moves their spectral
+    // content to the target pitch, and resynthesises -- so it changes pitch
+    // WITHOUT changing duration, and without dragging the formants along with
+    // it (the "chipmunk" effect a plain resampler produces).
+    //
+    // It replaced ResampleCorrector here because the naive resampler cannot
+    // sustain any ratio != 1.0: it collapses into a block-rate staircase after
+    // 0.68-4.84 s depending on direction (tasks.md D5, docs/decisions/0005).
+    // ResampleCorrector still exists as the naive baseline for the A/B
+    // comparison in T2.3/T2.6 -- swapping back is this one line.
+    //
+    // NOTE: this costs 140 ms of latency at 48 kHz. Irrelevant here (offline
+    // file processing), but far over AC4's 20 ms real-time budget -- T2.5 and
+    // T3.8 have to resolve that before Stage 3 can ship.
+    opentune::SignalsmithCorrector corrector;
 
     Engine engine(detector, quantizer, corrector, params);
 
