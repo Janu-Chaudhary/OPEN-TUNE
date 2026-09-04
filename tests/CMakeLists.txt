@@ -11,6 +11,9 @@ add_executable(opentune_tests
     test_resample_corrector.cpp
     test_engine.cpp
     test_signalsmith_corrector.cpp
+    test_pitch_error.cpp
+    test_octave_signals.cpp
+    test_yin_detector.cpp
     test_wav_file.cpp
     test_cli_args.cpp
 )
