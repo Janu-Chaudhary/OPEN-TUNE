@@ -347,11 +347,11 @@ performers, not this user.
 ## Discovered during work
 *New tasks found mid-implementation go here, then get slotted into a stage.*
 
-- [ ] **D1 — Clamp `pitchRatio` in the engine.** Folded into T0.9 rather than left
+- [x] **D1 — Clamp `pitchRatio` in the engine.** *(done — shipped in T0.9, commit `0e03c97`; FR15)* Folded into T0.9 rather than left
   standing alone; kept here as the record of where it came from. Detector octave
   errors (high-biased) feed the corrector's starvation region above ratio 1.0.
   Source: T0.4 and T0.7 reviews, wave 2.
-- [ ] **D2 — Fix transitive standard-library includes.** Two independent
+- [x] **D2 — Fix transitive standard-library includes.** *(done — `93d9d2f`; 9 files, not the 2 originally reported)* Two independent
   implementations relied on headers they did not include: `<algorithm>` (T0.2) and
   `<cstddef>` (T0.6). One root cause, so one cleanup pass over `engine/` and
   `tests/`, not scattered fixes. Slot: end of Stage 0, with the whole-branch review.
@@ -360,11 +360,11 @@ performers, not this user.
   applies or explicitly waives it. `Engine` is the natural owner of a process-wide FTZ mode,
   since it is the only class that sees the whole pipeline. Slot: Stage 3, with the real-time
   safety audit (T3.5). Widened from `ResampleCorrector` alone after the T0.9 review.
-- [ ] **D4 — Benchmark `AutocorrelationDetector` against the block budget.**
+- [x] **D4 — Benchmark `AutocorrelationDetector` against the block budget.** *(done — T1.9 measured it at 1.169 ms/block, 21.7% of the 256-sample budget)*
   ~1M multiply-adds per block is constitution-safe but not proven deadline-safe
   against 5.33 ms. Already covered by T1.9; noted here so it is not forgotten.
 
-- [ ] **D5 — `ResampleCorrector` cannot sustain any pitch ratio ≠ 1.0 indefinitely.**
+- [x] **D5 — `ResampleCorrector` cannot sustain any pitch ratio ≠ 1.0 indefinitely.** *(resolved — Signalsmith pulled forward, `docs/decisions/0005`; the limitation is pinned by a test, not removed)*
   Above 1.0 it starves: producing *n* output samples needs *ratio × n* input samples and the
   block contract delivers *n*, so the shortfall accumulates. Below 1.0 the read position
   falls behind until it runs off the old end of the bounded 2048-sample history. Either way
@@ -434,13 +434,13 @@ performers, not this user.
   three cases: clean corrected audio 0 flags (was 7), a synthetic D5 staircase still 50%
   flagged with pitch correctly withheld, and pure silence 0% voiced with no alarm.
 
-- [ ] **D8 — `analyze.py` is killed by the OOM killer on files longer than a few seconds.**
+- [x] **D8 — `analyze.py` is killed by the OOM killer on files longer than a few seconds.** *(done — `5be5433`; 96 s file now 460 MB / 8.1 s, was OOM-killed past 4 GB)*
   An 89-second WAV exits 137. It was only ever exercised on short synthetic clips, but the
   owner's real takes are 41–96 seconds, which is the normal case for actual material. Needs
   chunked/streamed analysis rather than whole-file arrays. Until fixed, analysis is limited to
   short excerpts, which is a real constraint on measuring AC2 over a full take.
 
-- [ ] **D9 — `analyze.py` and any WAV reader must honour the format tag, not assume 16-bit PCM.**
+- [x] **D9 — `analyze.py` and any WAV reader must honour the format tag, not assume 16-bit PCM.** *(done — `5be5433`; fmt chunk parsed, asserts loudly on mismatch)*
   The controller read a `audioFormat=3`, 32-bit float WAV as 16-bit int while triaging the
   owner's recordings. That reinterprets each float as two ints: it manufactures broadband noise,
   flattens the RMS envelope, and halves the reported duration — and it produced a confident,
