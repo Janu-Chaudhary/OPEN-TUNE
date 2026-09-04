@@ -245,6 +245,24 @@ The engine is done when all of the following pass.
 | AC8 | CPU usage, one instance, mid-range Android device | < 15% of one core |
 | AC9 | Audio-thread allocations, verified under instrumentation | zero |
 
+**FR6 evidence (2026-09-04).** Measured across five real Hindi vocal recordings — the owner's
+takes plus four third-party covers — each recording's own tuning reference, estimated by centring
+its pitch-class histogram:
+
+| Source | tuning reference |
+|---|---|
+| Atif Aslam (professional) | **A = 450.3 Hz** |
+| Female cover #2 | A = 438.1 Hz |
+| Female cover #3 | A = 442.2 Hz |
+| Female cover #4 | A = 446.0 Hz |
+| Owner, take04 | A = 442.4 Hz |
+
+**The spread is ~50 cents.** A quantizer locked to A440 would snap the Atif recording roughly 40
+cents wrong on *every note* — correction becoming damage. This is direct evidence for FR6 and for
+promoting tonic identification to Stage 2.5; it is not a theoretical concern. The estimator also
+cross-checks: the same singer measured on two independent recordings gave A = 446.0 and 444.9 Hz,
+4 cents apart.
+
 **AC2 note (2026-09-04).** AC2 cannot be established against algorithm-derived labels. The
 T1.0 reference set's own estimators disagree with each other by a median 8.4 cents and by more
 than 15 cents on 25.7% of the frames they agree on — the instrument's resolution is the size of
