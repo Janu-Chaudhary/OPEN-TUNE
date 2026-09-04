@@ -41,6 +41,13 @@ either should be, or should not exist.
 | `.claude/hooks/guard-bash.py` | Denies `gh`, `--no-verify`, `github.com` remotes before they run |
 | `.claude/hooks/guard-bash.test.sh` | Regression tests for the guard |
 | `.claude/hooks/format-cpp.sh` | clang-format on files edited via Edit/Write |
+
+## Agent tooling
+
+| Path | Purpose |
+|---|---|
+| `.agents/skills/find-skills/` | `find-skills` (vercel-labs/skills, MIT) — searches the open skills registry and recommends installable skills. Owner-requested 2026-09-04. Symlinked into `.claude/skills/`. **Note:** its own Step 6 instructs installing skills with `-g -y` (global, no confirmation); that step is not followed without asking the owner |
+| `skills-lock.json` | Records which agent skills are installed, with content hashes |
 | `.claude/hooks/format-changed.sh` | clang-format on files changed by any Bash command — closes the gap the first hook leaves |
 
 ## Code (created as tasks complete)
