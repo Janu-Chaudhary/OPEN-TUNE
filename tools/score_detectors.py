@@ -37,7 +37,10 @@ import os
 
 import numpy as np
 
-TAKES = ["01", "02", "03", "04", "05", "06"]
+# The six real takes of the T1.0 reference set.  `--cases` overrides this with
+# any other set of case ids -- the synthetic ground-truth set in
+# testdata/synthetic uses the identical CSV shape, so it scores unchanged.
+TAKES = ["take01", "take02", "take03", "take04", "take05", "take06"]
 DETECTORS = ["yin", "autocorr"]
 
 # Offset applied to the detector's block-end timestamp, in seconds, to place its
@@ -146,7 +149,11 @@ def main():
     ap.add_argument("dumpdir")
     ap.add_argument("--labeldir", default="testdata/vocals")
     ap.add_argument("--json", default=None)
+    ap.add_argument("--cases", default=None,
+                    help="comma-separated case ids to score instead of the six takes")
     args = ap.parse_args()
+
+    takes = args.cases.split(",") if args.cases else TAKES
 
     results = []
     # Alignment sensitivity, pooled over all six takes.  This is reported, not
@@ -157,14 +164,14 @@ def main():
     # by itself.
     print("=== alignment sensitivity, pooled over all takes ===")
     print("  offset_ms   yin:med|c| yin:<=15c   autocorr:med|c| autocorr:<=15c")
-    labs = {t: load_labels(os.path.join(args.labeldir, "take%s.f0.csv" % t)) for t in TAKES}
-    dmps = {(t, d): load_dump(os.path.join(args.dumpdir, "take%s.%s.csv" % (t, d)))
-            for t in TAKES for d in DETECTORS}
+    labs = {t: load_labels(os.path.join(args.labeldir, "%s.f0.csv" % t)) for t in takes}
+    dmps = {(t, d): load_dump(os.path.join(args.dumpdir, "%s.%s.csv" % (t, d)))
+            for t in takes for d in DETECTORS}
     for ms in SCAN_MS:
         cells = []
         for det in DETECTORS:
             meds, w15, wts = [], [], []
-            for t in TAKES:
+            for t in takes:
                 r = score(labs[t], dmps[(t, det)], ms / 1000.0)
                 meds.append(r["median_abs_cents"] * r["scored_frames"])
                 w15.append(r["within_15_cents"] * r["scored_frames"])
@@ -175,10 +182,10 @@ def main():
     print("  scored at offset %.2f ms (half the detectors' 2217-sample buffered span)\n"
           % (DEFAULT_OFFSET_S * 1000.0))
 
-    for take in TAKES:
-        lab = load_labels(os.path.join(args.labeldir, "take%s.f0.csv" % take))
+    for take in takes:
+        lab = load_labels(os.path.join(args.labeldir, "%s.f0.csv" % take))
         for det in DETECTORS:
-            dmp = load_dump(os.path.join(args.dumpdir, "take%s.%s.csv" % (take, det)))
+            dmp = load_dump(os.path.join(args.dumpdir, "%s.%s.csv" % (take, det)))
             for three in (False, True):
                 s = score(lab, dmp, DEFAULT_OFFSET_S, require_three_way=three)
                 if s is None:

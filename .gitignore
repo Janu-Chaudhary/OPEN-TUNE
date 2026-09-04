@@ -35,3 +35,14 @@ build-*/
 # IS tracked - the labels are text and are what the measurements cite.
 testdata/vocals/*.wav
 testdata/vocals/*.mp4
+
+# Synthetic ground-truth voices for T1.0 (tools/synth_voices.py). Regenerated
+# in seconds from the committed script, so the audio is derived, not source --
+# and .wav is binary that poisons an agent's context if read directly
+# (CLAUDE.md). The .f0.csv label tracks and the MANIFEST ARE tracked: they are
+# text, they are the ground truth, and they are what the measurements cite.
+testdata/synthetic/*.wav
+
+# Python bytecode left by the analysis tooling
+__pycache__/
+*.pyc
