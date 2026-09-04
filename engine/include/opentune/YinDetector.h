@@ -73,12 +73,21 @@ namespace opentune {
 //      meaningful, and only then is "take the FIRST lag under it" a
 //      well-defined, signal-independent rule.
 //
-//   3. Absolute threshold, first crossing (T1.5). Take the first tau whose
-//      d' dips below a fixed threshold, then descend to the bottom of that
+//   3. Threshold, first crossing (T1.5, revised by D10). Take the first tau
+//      whose d' dips below a threshold, then descend to the bottom of that
 //      dip -- rather than taking the global minimum, which would be a coin
 //      flip between P, 2P and 3P. Because "first" now means "shortest
 //      period", period doubling loses. (The paper measures the gross error
 //      rate falling from 1.69% to 0.78% at this step.)
+//
+//      The paper's threshold is the fixed kAbsoluteThreshold. This
+//      implementation uses max(kAbsoluteThreshold, kRelativeThreshold *
+//      min d') instead -- identical on any signal whose true period dips
+//      clearly below 0.1, and different only on breathy phonation, where
+//      aspiration noise lifts the whole difference function so far that a
+//      fixed bar is either crossed first at the OCTAVE or never crossed at
+//      all. See the step 3 comment in YinDetector.cpp for the mechanism and
+//      the measurement; it is the whole of D10.
 //
 //      This is NOT the same tie-break as AutocorrelationDetector's
 //      first-peak rule, even though both say "first". There, the threshold
@@ -181,6 +190,39 @@ private:
     // lag, one fixed number works across signals -- which is the whole
     // reason a first-crossing rule is possible.
     static constexpr float kAbsoluteThreshold = 0.1f;
+
+    // How much worse than the BEST dip in the frame a shorter dip may be
+    // and still win (D10). Only ever used to raise step 3's threshold above
+    // kAbsoluteThreshold, never to lower it:
+    //
+    //     threshold = max(kAbsoluteThreshold, kRelativeThreshold * min d')
+    //
+    // Why a relative threshold is needed at all is explained at step 3 in
+    // YinDetector.cpp: broadband aspiration noise lifts the whole
+    // difference function off the floor, so on a breathy voice the true
+    // period's dip can sit above 0.1 while the octave's dip sits below it,
+    // and the fixed threshold then fires in the wrong place.
+    //
+    // Why 2. For a periodic signal plus uncorrelated noise, d(P) and d(2P)
+    // both bottom out on the same noise floor ~2*W*sigma^2 and d' at the
+    // two is tied in principle -- which of them comes out lower is decided
+    // by estimation noise, not by the signal. So the tolerance only has to
+    // be wide enough to cover that scatter, and a factor of 2 (3 dB on the
+    // normalised difference) is comfortably wider than the ~1.4 measured
+    // between d'(P) and d'(2P) on the failing frames. It is also far
+    // narrower than the gap to a genuinely wrong lag, where d' is order 1 --
+    // ten times the values in play.
+    //
+    // Measured on testdata/synthetic, 33 cases with exact labels: the
+    // octave-error rate over the two breathy cases falls to 0.00% anywhere
+    // in 2.0-4.0 and every non-breathy case is bit-for-bit unchanged, so 2
+    // sits inside a plateau rather than on a fitted point. Below it the
+    // error returns (0.11% at 1.75, 0.64% at 1.5); at 6 and above the
+    // mirror hazard appears -- the threshold climbs high enough to accept
+    // noise wiggles at short lags, which step 5 then reports unvoiced, so
+    // recall falls. 2 is the low, conservative end of the safe range: the
+    // smallest departure from the paper's rule that clears AC7 outright.
+    static constexpr float kRelativeThreshold = 2.0f;
 
     // Maximum aperiodicity -- d' at the chosen lag -- for a frame to count
     // as voiced (T1.7, AC6). Deliberately looser than kAbsoluteThreshold:

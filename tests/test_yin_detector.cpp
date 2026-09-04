@@ -672,3 +672,170 @@ TEST_CASE("YIN gives the same answer whatever block size the audio arrives in") 
     }
     CHECK(std::abs(centsError(static_cast<double>(reference), 311.13)) < 5.0);
 }
+
+// ---------------------------------------------------------------------------
+// D10 -- breathy phonation must not read an octave low
+// ---------------------------------------------------------------------------
+//
+// The audio problem. A "breathy" voice is one where the vocal folds do not
+// close completely on each cycle, so air keeps hissing through while they
+// vibrate. The recorded signal is then a periodic glottal pulse train PLUS a
+// broadband aspiration noise floor, and the ratio between the two is the
+// harmonics-to-noise ratio (HNR). Healthy loud phonation runs 20 dB and up;
+// soft, breathy or untrained singing -- and anything recorded on a phone
+// mic -- routinely sits at 10 dB or below. It is common material, not an
+// edge case.
+//
+// What that noise does to YIN. The noise is uncorrelated with itself at any
+// non-zero lag, so it adds roughly the same constant floor to d(tau)
+// everywhere: d(P) no longer falls to ~0 but to ~2*W*sigma^2, and so does
+// d(2P). The two dips, which the normalisation step already leaves tied in
+// principle, are now BOTH lifted well off the floor -- often clean past
+// YIN's fixed 0.1 absolute threshold. Once they are, which of them the
+// detector reports stops being a measurement and becomes an accident of
+// which one happened to land a hair lower.
+//
+// Measured on testdata/synthetic (exact labels, docs/decisions/0008): every
+// one of YIN's octave errors comes from the two breathy cases and every one
+// is octave DOWN -- 110 Hz reported for a 220 Hz voice. It fails in the two
+// ways this test reproduces:
+//
+//   * at HNR 5 dB no lag clears 0.1 at all, and the old fallback took the
+//     GLOBAL minimum -- precisely the "coin flip between P, 2P and 3P" that
+//     step 3's own comment rejects;
+//   * at HNR 10 dB, d'(P) lands just ABOVE 0.1 and d'(2P) just below, so the
+//     first-crossing walk sails past the fundamental and stops at the
+//     octave.
+//
+// The HNR figures below are 8-9 dB rather than 5-10 dB because this test's
+// signal is not testdata/synthetic's: a bare harmonic stack plus flat white
+// noise is harsher than a Rosenberg pulse through a formant cascade with
+// tract-shaped aspiration, so the same failure appears a few dB higher. What
+// is reproduced is the mechanism, not the exact HNR of the reference set.
+// 8-9 dB was chosen because there the OLD code reports all nine trials
+// voiced -- six of them an octave low -- so the fix cannot be credited for
+// silently reclassifying anything.
+//
+// Both are the same defect wearing two hats: a threshold fixed at 0.1 is
+// meaningless once the whole difference function has been lifted above it.
+// The reported answer is not merely wrong, it is wrong AND confident --
+// d'(2P) ~ 0.09 is far under the 0.2 voicing gate, so the octave-low reading
+// ships as a voiced frame and gets "corrected" to the wrong note.
+namespace {
+
+// A breathy voice: a harmonic stack at `fundamentalHz` plus white noise
+// mixed to give exactly `hnrDb` harmonics-to-noise ratio in power.
+//
+// Twelve harmonics at 1/k is a reasonable stand-in for a glottal source
+// spectrum (a real one rolls off at about -12 dB/octave; 1/k is -6, which
+// is if anything harder on the detector because it puts more energy in the
+// upper partials). The noise is white rather than shaped: aspiration noise
+// in a real voice is shaped by the vocal tract, but shaping it would only
+// concentrate the noise and make the test easier, and the defect under test
+// is about the LEVEL of the difference-function floor, not its colour.
+//
+// HNR is a power ratio, so the noise gain is sqrt(harmonicPower /
+// (noisePower * 10^(hnr/10))) -- measured from the two signals rather than
+// assumed, so the mix is exact whatever the generators happen to produce.
+std::vector<float> breathyVoice(double fundamentalHz, double hnrDb, unsigned seed, int numSamples) {
+    const std::vector<float> harmonics =
+        harmonicStack(fundamentalHz, kSampleRate, numSamples, 1, 12, 1.0, 1.0);
+    const std::vector<float> noise = opentune::test::whiteNoise(numSamples, seed);
+
+    double harmonicPower = 0.0;
+    double noisePower = 0.0;
+    for (int i = 0; i < numSamples; ++i) {
+        const double h = static_cast<double>(harmonics[static_cast<std::size_t>(i)]);
+        const double n = static_cast<double>(noise[static_cast<std::size_t>(i)]);
+        harmonicPower += h * h;
+        noisePower += n * n;
+    }
+
+    // Guard the division (engine/CLAUDE.md); both powers are non-zero for
+    // every signal this helper is asked for, but say so rather than assume.
+    const double targetNoisePower = (noisePower > 0.0 && harmonicPower > 0.0)
+                                        ? harmonicPower / std::pow(10.0, hnrDb / 10.0)
+                                        : 0.0;
+    const double noiseGain = (noisePower > 0.0) ? std::sqrt(targetNoisePower / noisePower) : 0.0;
+
+    std::vector<float> out(static_cast<std::size_t>(numSamples), 0.0f);
+    double peak = 0.0;
+    for (int i = 0; i < numSamples; ++i) {
+        const double value = static_cast<double>(harmonics[static_cast<std::size_t>(i)]) +
+                             noiseGain * static_cast<double>(noise[static_cast<std::size_t>(i)]);
+        out[static_cast<std::size_t>(i)] = static_cast<float>(value);
+        peak = std::max(peak, std::abs(value));
+    }
+    // Peak-normalise to 0.8, matching testdata/synthetic's 0.7 in spirit.
+    // Loudness cancels in d' (step 2) so this changes no result; it only
+    // keeps the test signal inside nominal range.
+    if (peak > 0.0) {
+        const float scale = static_cast<float>(0.8 / peak);
+        for (float& sample : out) {
+            sample *= scale;
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("D10: YIN does not read breathy phonation an octave low") {
+    // Nine independent trials per HNR: three pitches spanning the range a
+    // sung phrase actually occupies, times three noise seeds, so a pass
+    // cannot come from one lucky draw. Every f0 here is chosen so that BOTH
+    // f0 and f0/2 sit inside the 65-1100 Hz search range -- otherwise the
+    // octave-down answer would be unreachable and the test would pass for
+    // the uninteresting reason that the wrong answer was out of bounds.
+    const double fundamentals[] = {165.0, 220.0, 294.0};
+    const unsigned seeds[] = {1u, 7u, 20260904u};
+
+    // A longer signal than kTestSamples: at 165 Hz the analysis window holds
+    // only ~7 periods, and the estimate should be read after the window is
+    // full of signal several times over.
+    const int numSamples = 12288;
+
+    for (const double hnrDb : {9.0, 8.0}) {
+        int octaveLow = 0;
+        int voicedTrials = 0;
+        for (const double f0 : fundamentals) {
+            for (const unsigned seed : seeds) {
+                const std::vector<float> signal = breathyVoice(f0, hnrDb, seed, numSamples);
+
+                YinDetector detector;
+                detector.prepare(kSampleRate, kBlockSize);
+                const PitchEstimate estimate = feedBlocks(detector, signal);
+
+                const double cents = estimate.frequencyHz > 0.0f
+                                         ? centsError(static_cast<double>(estimate.frequencyHz), f0)
+                                         : 0.0;
+                INFO("HNR ", hnrDb, " dB, f0 ", f0, " Hz, seed ", seed, " -> ",
+                     estimate.frequencyHz, " Hz (", cents, " cents), voiced ", estimate.voiced);
+
+                if (estimate.voiced) {
+                    ++voicedTrials;
+                    // Octave DOWN specifically: past -600 cents the reading
+                    // is closer to f0/2 than to f0.
+                    if (cents < -600.0) {
+                        ++octaveLow;
+                    }
+                }
+            }
+        }
+
+        INFO("HNR ", hnrDb, " dB: ", octaveLow, " octave-low of ", voicedTrials, " voiced trials");
+
+        // The bar is zero, not "fewer than before". AC7 allows under 1% of
+        // frames and there are only nine trials here, so any single failure
+        // is already a rate the criterion cannot absorb.
+        CHECK(octaveLow == 0);
+
+        // Guard against the null hypothesis this project has been bitten by
+        // five times: a fix that "passes" by declaring everything unvoiced
+        // would satisfy the check above while making the detector useless.
+        // The OLD code already reports all nine of these trials voiced, so
+        // this is not a bar the fix is allowed to lower -- it pins the
+        // voiced count exactly where it was before the fix.
+        CHECK(voicedTrials == 9);
+    }
+}

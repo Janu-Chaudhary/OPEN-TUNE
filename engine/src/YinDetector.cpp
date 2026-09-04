@@ -176,15 +176,15 @@ PitchEstimate YinDetector::process(const float* block, int n) noexcept {
             (runningSum > 0.0) ? (dTau * static_cast<double>(tau) / runningSum) : 1.0;
     }
 
-    // --- Step 3 (T1.5): absolute threshold, first crossing ----------------
+    // --- Step 3 (T1.5, revised by D10): threshold-crossing, first dip -----
     //
     // Walk lags from short to long and take the FIRST one whose d' dips
-    // below a fixed threshold, then slide down to the bottom of that dip.
-    // Not the global minimum -- that is a coin flip between P, 2P and 3P,
-    // which all score alike for a stationary tone (the T1.4 test asserts
-    // exactly that tie). "First" means "shortest period", so period
-    // doubling loses by construction. The paper measures this step taking
-    // the gross error rate from 1.69% to 0.78%.
+    // below a threshold, then slide down to the bottom of that dip. Not the
+    // global minimum -- that is a coin flip between P, 2P and 3P, which all
+    // score alike for a stationary tone (the T1.4 test asserts exactly that
+    // tie). "First" means "shortest period", so period doubling loses by
+    // construction. The paper measures this step taking the gross error
+    // rate from 1.69% to 0.78%.
     //
     // Note how differently this behaves from AutocorrelationDetector's
     // superficially similar "first qualifying peak" rule. There the
@@ -195,35 +195,103 @@ PitchEstimate YinDetector::process(const float* block, int n) noexcept {
     // sits on d's rising slope where d' >= 1, so it cannot clear the
     // threshold at all. Both steps say "first"; only this one has already
     // disqualified the short lags.
-    int bestLag = -1;
+    //
+    // WHY THE THRESHOLD IS NOT SIMPLY 0.1 (D10)
+    //
+    // The paper's threshold is the fixed kAbsoluteThreshold. That is
+    // correct as long as the true period's dip actually reaches it. On a
+    // BREATHY voice it does not, and the reason is worth understanding
+    // because it is a property of the signal, not of the code.
+    //
+    // Breathy phonation is a periodic glottal pulse train plus broadband
+    // aspiration noise hissing through folds that never fully close. Noise
+    // is uncorrelated with itself at every non-zero lag, so it adds roughly
+    // the same constant floor ~2*W*sigma^2 to d(tau) EVERYWHERE. The dip at
+    // the true period no longer reaches near-zero; it bottoms out on that
+    // floor -- and so does the dip at 2P, at 3P, at every multiple. Once
+    // the floor is high enough that d'(P) sits above 0.1, one of two things
+    // happens, and measured on testdata/synthetic (docs/decisions/0008)
+    // both did:
+    //
+    //   * d'(2P) is still under 0.1 while d'(P) is just over it (this was
+    //     51% of frames at HNR 10 dB, with d'(P) ~ 0.117 against d'(2P) ~
+    //     0.088). The walk sails straight past the fundamental and stops at
+    //     the octave. The fixed threshold did not fail to fire -- it fired
+    //     in the wrong place.
+    //
+    //   * nothing at all clears 0.1 (100% of frames at HNR 5 dB). The old
+    //     code then fell back to the GLOBAL minimum of d' -- the one rule
+    //     the paragraph above calls a coin flip -- and lost the toss toward
+    //     2P about a third of the time.
+    //
+    // Both are the same defect: an absolute threshold stops meaning
+    // anything once the whole function has been lifted above it. And the
+    // wrong answer shipped as CONFIDENT, because d'(2P) ~ 0.09 is far under
+    // step 5's 0.2 voicing gate -- so tightening that gate cannot fix this,
+    // and measurement confirmed it cannot.
+    //
+    // The repair keeps the paper's rule and makes the threshold adapt only
+    // when it has to:
+    //
+    //     threshold = max(kAbsoluteThreshold, kRelativeThreshold * dPrimeMin)
+    //
+    // where dPrimeMin is the deepest dip anywhere in the answer range. On
+    // any signal where some lag genuinely reaches 0.1 with room to spare
+    // this is exactly kAbsoluteThreshold and the behaviour is unchanged --
+    // it can only ever raise the bar's floor, never lower it below the
+    // paper's value. On a noise-lifted function it says instead: "the best
+    // this frame can do is dPrimeMin; accept the SHORTEST period that comes
+    // within a factor of that, because P and 2P are tied in principle and
+    // the shorter one is the period."
+    //
+    // Two consequences worth stating:
+    //
+    //   * The fallback is gone, not relocated. The global minimum always
+    //     satisfies this test (its d' equals dPrimeMin, and the factor is
+    //     >= 1), so the search always terminates with a lag; the old
+    //     "nothing qualified" branch cannot arise.
+    //
+    //   * The mirror hazard -- a shallow sub-period dip from noise winning
+    //     and giving octave-HIGH errors -- is bounded by step 2 and by step
+    //     5 together. Step 2 puts the entire rising slope out of lag 0 at
+    //     d' >= 1, an order of magnitude above the dips in play, so a noise
+    //     wiggle there does not qualify unless the frame is essentially
+    //     unpitched; and if the threshold does climb that high, the lag it
+    //     accepts carries a d' above the 0.2 voicing gate and the frame is
+    //     reported unvoiced rather than wrong. Measured: the factor can be
+    //     raised to 4 with no change at all to any synthetic case, and only
+    //     at 6 and above does recall start to fall.
+    int bestLag = m_minLagSamples;
+    double dPrimeMin = m_cmnd[static_cast<std::size_t>(m_minLagSamples)];
+    for (int tau = m_minLagSamples + 1; tau <= m_maxLagSamples; ++tau) {
+        if (m_cmnd[static_cast<std::size_t>(tau)] < dPrimeMin) {
+            dPrimeMin = m_cmnd[static_cast<std::size_t>(tau)];
+        }
+    }
+
+    const double threshold = std::max(static_cast<double>(kAbsoluteThreshold),
+                                      static_cast<double>(kRelativeThreshold) * dPrimeMin);
+
     for (int tau = m_minLagSamples; tau <= m_maxLagSamples; ++tau) {
-        if (m_cmnd[static_cast<std::size_t>(tau)] >= static_cast<double>(kAbsoluteThreshold)) {
+        // The second clause is what guarantees this loop always finds a
+        // lag: the global minimum satisfies it by definition, whatever the
+        // threshold turned out to be. Without it a factor below 1 could
+        // leave the search empty, which is the state the old fallback
+        // existed to paper over.
+        const double dPrime = m_cmnd[static_cast<std::size_t>(tau)];
+        if (dPrime >= threshold && dPrime > dPrimeMin) {
             continue;
         }
-        // Found the first dip below the threshold. The threshold is
-        // crossed on the way DOWN, a sample or two before the actual
-        // bottom, so walk forward while d' is still falling. Taking the
-        // crossing itself would bias every estimate slightly short.
+        // Found the first qualifying dip. The threshold is crossed on the
+        // way DOWN, a sample or two before the actual bottom, so walk
+        // forward while d' is still falling. Taking the crossing itself
+        // would bias every estimate slightly short.
         while (tau + 1 <= m_maxLagSamples &&
                m_cmnd[static_cast<std::size_t>(tau + 1)] < m_cmnd[static_cast<std::size_t>(tau)]) {
             ++tau;
         }
         bestLag = tau;
         break;
-    }
-
-    // Nothing cleared the threshold: no lag in range looks strongly
-    // periodic. Fall back to the shallowest dip there is, which is the
-    // best available answer -- and, crucially, record how shallow it is.
-    // Step 5 (T1.7) is what decides whether it is good enough to call
-    // voiced; this step's job is only to name a candidate.
-    if (bestLag < 0) {
-        bestLag = m_minLagSamples;
-        for (int tau = m_minLagSamples + 1; tau <= m_maxLagSamples; ++tau) {
-            if (m_cmnd[static_cast<std::size_t>(tau)] < m_cmnd[static_cast<std::size_t>(bestLag)]) {
-                bestLag = tau;
-            }
-        }
     }
 
     // --- Step 4 (T1.6): parabolic interpolation ---------------------------
@@ -274,10 +342,18 @@ PitchEstimate YinDetector::process(const float* block, int n) noexcept {
 
     // --- Step 5 (T1.7): voiced/unvoiced from the aperiodicity -------------
     //
-    // Steps 1-4 always name a lag -- the fallback above picks the
-    // shallowest dip even when nothing is periodic. Something has to
-    // decide whether that lag means anything, and YIN has already computed
-    // the number that answers it.
+    // Steps 1-4 always name a lag -- step 3's threshold is relative as well
+    // as absolute, so the deepest dip always qualifies and the search never
+    // comes back empty, even on audio with no periodicity in it at all.
+    // Something has to decide whether that lag means anything, and YIN has
+    // already computed the number that answers it.
+    //
+    // This is also what bounds D10's adaptive threshold from above. On an
+    // unpitched frame the threshold rises with the (high) minimum d', so it
+    // may well accept some short-lag noise wiggle -- but that wiggle's own
+    // d' is then above the gate below and the frame is reported unvoiced.
+    // The relative threshold can cost recall on genuinely hopeless audio;
+    // it cannot turn noise into a confident wrong pitch.
     //
     // d' at the chosen lag IS the aperiodicity. No extra statistic, no
     // loudness rule: 0 means the signal repeats perfectly at that lag,
