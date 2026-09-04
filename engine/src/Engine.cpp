@@ -114,12 +114,30 @@ void Engine::process(const float* in, float* out, int n) noexcept {
     const PitchEstimate estimate = m_detector.process(in, n);
 
     // FR2 / bypass: unvoiced audio (silence, breath, consonants) passes
-    // through completely untouched. This is a direct copy, not a call
-    // into the corrector with pitchRatio 1.0 -- FR2 requires bit-identical
-    // passthrough, which a direct copy guarantees by construction,
-    // independent of whatever a given PitchCorrector's own unity-ratio
-    // behaviour happens to be (PitchCorrector.h documents unity as merely
-    // the *ideal*, not a guarantee, for a real implementation).
+    // through *uncorrected* -- but it still goes THROUGH the corrector, at
+    // pitchRatio 1.0, rather than being copied straight to the output.
+    //
+    // This used to be a direct copy, on the reasoning that a copy gives
+    // bit-identical passthrough by construction. That reasoning is sound
+    // about one block in isolation and wrong about a stream, because it
+    // creates two paths with two different latencies. A corrector with
+    // latency (SignalsmithCorrector's STFT costs 140 ms) emits corrected
+    // audio late, while a direct copy emits bypassed audio immediately --
+    // so at every voiced/unvoiced boundary the bypassed audio arrives
+    // ahead of the corrected audio it should follow, overwriting its tail.
+    //
+    // Measured before the fix, on a tone with a 300 ms silent gap: the gap
+    // came out 260 ms long and 40 ms early, having swallowed 140 ms of
+    // corrected tail. In real singing every consonant and every breath is
+    // such a boundary, so this was not an edge case (tasks.md D6).
+    //
+    // Routing everything through one path makes latency uniform whatever
+    // corrector is installed. The cost is that passthrough is no longer
+    // bit-identical for a lossy corrector -- an STFT round trip is not
+    // transparent. FR2 asks for *uncorrected*, not *bit-identical*, and
+    // unity ratio applies no pitch correction, so the requirement is met.
+    // A latency-consistent stream matters far more to the ear than exact
+    // sample values in the gaps between phrases.
     //
     // `estimate.frequencyHz <= 0.0f` is checked too, defensively, even
     // though a well-behaved PitchDetector never reports frequencyHz <= 0
@@ -131,9 +149,7 @@ void Engine::process(const float* in, float* out, int n) noexcept {
     // unvoiced is the same "detection is fallible, do not trust it blindly"
     // spirit as the FR15 clamp itself.
     if (!estimate.voiced || estimate.frequencyHz <= 0.0f) {
-        for (int i = 0; i < n; ++i) {
-            out[static_cast<std::size_t>(i)] = in[static_cast<std::size_t>(i)];
-        }
+        m_corrector.process(in, out, n, 1.0f);
         return;
     }
 

@@ -83,6 +83,12 @@ VOICING_THRESHOLD = 0.3
 # warning about this exact case.
 STUCK_SAMPLE_FRACTION = 0.5
 
+# A stuck frame must also be audible. Without this, digital silence -- every
+# sample identical to the last -- is flagged as a sample-and-hold artifact,
+# which is a false alarm on the most ordinary content there is. See
+# is_stuck_frame() for the reasoning, and tasks.md D7 for the bug this fixes.
+STUCK_MIN_AMPLITUDE = 0.01
+
 # Frame size / hop for the short-time analysis (pitch + RMS). 2048 samples
 # at typical vocal sample rates (44.1-48 kHz) is ~43-46 ms -- long enough to
 # contain several periods of even a low male voice (~80 Hz => 12.5 ms
@@ -155,11 +161,34 @@ def load_mono(path: str) -> tuple[np.ndarray, int]:
 
 def is_stuck_frame(frame: np.ndarray) -> bool:
     """True when `frame` looks like a sample-and-hold artifact rather than
-    real audio -- see STUCK_SAMPLE_FRACTION above for why this exists."""
+    real audio -- see STUCK_SAMPLE_FRACTION above for why this exists.
+
+    Two conditions, both required. The repeat fraction alone is not enough:
+    digital silence is a sequence of identical zeros, so it satisfies any
+    repeat test trivially. Silence and a sample-and-hold collapse are both
+    "constant", but they are completely different problems -- silence is
+    ordinary and expected (gaps between phrases, a file's lead-in), while a
+    stuck frame is a corrector failure that the listener hears as a loud
+    buzz. Reporting the first as the second sends the reader after a bug
+    that is not there, which for a tool an agent uses *instead of hearing*
+    is worse than reporting nothing at all.
+
+    So a stuck frame must also be LOUD. The threshold is deliberately well
+    above a noise floor and well below a real signal: the D5 collapse holds
+    a sample from real audio, so its level sits near the signal's own
+    amplitude (measured peak ~0.5 on a 0.7-peak input), nowhere near this.
+    """
     if len(frame) < 2:
         return False
     repeat_fraction = float(np.mean(frame[1:] == frame[:-1]))
-    return repeat_fraction >= STUCK_SAMPLE_FRACTION
+    if repeat_fraction < STUCK_SAMPLE_FRACTION:
+        return False
+    # Median, not peak: a frame straddling the boundary between silence and a
+    # loud onset is mostly repeated zeros *and* contains a loud sample, so a
+    # peak test still flags it. The median asks the right question -- is the
+    # repeated value itself loud? -- which is true of a held staircase and
+    # false of silence with an edge in it.
+    return float(np.median(np.abs(frame))) >= STUCK_MIN_AMPLITUDE
 
 
 def autocorrelation_pitch_frame(frame: np.ndarray, sample_rate: int) -> tuple[float, float]:

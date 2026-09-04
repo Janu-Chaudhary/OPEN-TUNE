@@ -152,21 +152,31 @@ exactly what the naive corrector cannot do; block-size invariance holds; and `pr
 performs all allocation, with `process()` demonstrated allocation-free rather than asserted
 to be (constitution II — the header uses `std::vector`, `std::function` and `std::random`).
 
-### T0.11 — CLI tool `[ ]`
+### T0.11 — CLI tool `[x]`
 `opentune-cli in.wav out.wav [--key C:major] [--strength 0.8]`.
 Feeds the file to the engine in 256-sample blocks — the same call pattern a real-time
 host will use, so Stage 3 changes only the caller.
 **Depends on:** T0.9, T0.10
 **Done when:** it processes a real vocal recording end to end and the output is audibly
 pitch-shifted. (FR11)
+**Done 2026-09-04** (`05890fa`). Mechanically verified by review: exact frame-count
+preservation on a length deliberately not a multiple of 256 (10377 in → 10377 out, final
+block 137 samples, no padding), output genuinely altered rather than copied, all seven error
+paths named and exiting 1, and `--strength 0.2` vs `0.9` byte-identical as `--help` promises.
+**The audible half of this criterion is unverified and is the owner's** — the implementer
+correctly declined to claim it rather than substituting a mechanical check.
 
-### T0.12 — Analysis tool `[ ]`
+### T0.12 — Analysis tool `[x]`
 `tools/analyze.py in.wav [--out report.png]`: pitch track (Hz and MIDI), RMS envelope,
 voiced/unvoiced regions, and a spectrogram, rendered to one PNG. This is how Claude sees
 audio — it cannot hear. Also prints a cents-error summary when given `--ref target.wav`.
 **Depends on:** T0.0, T0.11
 **Done when:** running it on the T0.11 output produces a PNG where the corrected pitch
 track visibly snaps to semitone lines, and the numbers match the T0.9 test expectations.
+**Done 2026-09-04** (`71e015e`). Verified by the controller on a 12 s corrected file: pitch
+track pinned to the 440 Hz gridline for the full duration, flat RMS envelope, stable
+harmonics in the spectrogram, and a printed cents-error summary. It also earns its keep
+immediately — the startup artifact in D6 below was found by looking at its output.
 
 ### 🎧 Stage 0 checkpoint
 Record yourself singing, run it through the CLI, listen. Expect artifacts — chipmunk
@@ -296,6 +306,45 @@ That list is the agenda for Stages 1 and 2.
   `docs/decisions/0005`). `ResampleCorrector` is kept as the naive baseline with this
   limitation pinned by a test, not deleted.
   Source: T0.9 review probe, controller-verified.
+
+- [x] **D6 — Every output file starts with a raw-passthrough burst, then a silent hole.**
+  Measured on a 12 s file: samples **0–2047 are bit-identical to the input** (42.7 ms), then
+  silence until ~183 ms, then a fade-in to correct output. Two causes compounding, neither a
+  bug on its own:
+  1. `AutocorrelationDetector` needs ~2048 samples before it can report a pitch, so it
+     reports `voiced=false` and FR2's bypass passes the audio through **uncorrected**.
+  2. `SignalsmithCorrector` then engages but has 140 ms of latency, so its output is silent
+     while its STFT fills.
+  Audible as a click and a dropout at the start of every file. Two candidate fixes, neither
+  **Worse than first recorded, and fixed 2026-09-04.** Further measurement showed this was
+  not only a startup artifact: the bypass emitted with *zero* latency while corrected audio
+  was 140 ms late, so **every** voiced/unvoiced boundary was misaligned. On a tone with a
+  300 ms silent gap the output gap came out 260 ms long and 40 ms *early*, having swallowed
+  140 ms of corrected tail. In singing that is every consonant and every breath.
+
+  Two fixes: `Engine` now routes unvoiced blocks *through* the corrector at ratio 1.0 rather
+  than copying, so both paths share one latency whatever corrector is installed; and the CLI
+  compensates that latency offline by feeding trailing silence and discarding the leading
+  `latencySamples()`. Verified: output length preserved exactly, gap alignment error now
+  +29 ms (STFT window smearing, not a timing bug), full amplitude from 0 ms with no hole, and
+  correction still holding 440.4 Hz at 0.3 s, 4 s and 11.5 s.
+
+  The cost, recorded honestly: passthrough is no longer bit-identical for a lossy corrector.
+  FR2 asks for *uncorrected*, not *bit-identical*, and unity ratio applies no correction.
+  Source: controller verification of the T0.11 + T0.14 integration.
+
+- [x] **D7 — `analyze.py` reports silence as a D5 sample-and-hold artifact.**
+  Its stuck-frame detector flags any frame where ≥50% of samples repeat the previous one.
+  Digital silence satisfies that trivially, so the leading silence from D6 is reported as
+  "0.6% of frames are sample-and-hold artifacts -- see tasks.md D5". Silence and a full-scale
+  staircase are both constant but are entirely different problems; the check needs an
+  amplitude condition so it fires only on the loud case. Small fix, but it matters: this tool
+  is how an agent perceives audio, and a false alarm here sends the reader after the wrong bug.
+  **Fixed 2026-09-04.** A stuck frame must now also be loud, tested on the *median* absolute
+  amplitude rather than the peak — a frame straddling silence and a loud onset is mostly
+  repeated zeros *and* contains a loud sample, so a peak test still flagged it. Verified on
+  three cases: clean corrected audio 0 flags (was 7), a synthetic D5 staircase still 50%
+  flagged with pitch correctly withheld, and pure silence 0% voiced with no alarm.
 
 *Seven further minor review findings are held in `.superpowers/sdd/tasks/progress.md`
 for the whole-branch review at the end of Stage 0.*

@@ -29,6 +29,8 @@
 #include "opentune/ScaleQuantizer.h"
 #include "opentune/SignalsmithCorrector.h"
 
+#include <vector>
+
 #include <cstddef>
 #include <cstdlib>
 #include <exception>
@@ -118,11 +120,34 @@ int main(int argc, char** argv) {
     engine.prepare(input.sampleRate, kBlockSize);
 
     // --- Process ------------------------------------------------------------
+    // Latency compensation. The engine is causal: a corrector with latency L
+    // emits the sample for time t at time t+L, so a naive write of its output
+    // would begin with L samples of the corrector's start-up (silence, or a
+    // fade-in) and end L samples before the music does. For SignalsmithCorrector
+    // that is 140 ms at 48 kHz -- an audible dropout at the head of every file
+    // and a clipped tail at the end (tasks.md D6).
+    //
+    // Offline we can simply pay for it: feed L extra samples of silence past the
+    // end of the file so the engine flushes everything it is still holding, then
+    // discard the first L samples of what comes back. The result is the same
+    // length as the input and time-aligned with it.
+    //
+    // This is host-side work and belongs here rather than in the engine. A
+    // real-time host cannot do it -- there is no future to fetch and no way to
+    // discard time already elapsed, which is exactly why AC4 caps latency at
+    // 20 ms instead of compensating for it.
+    const int latency = engine.latencySamples();
+    const std::size_t latencySamples = latency > 0 ? static_cast<std::size_t>(latency) : 0;
+
     opentune::host::WavData output;
     output.sampleRate = input.sampleRate;
-    output.samples.resize(input.samples.size());
 
-    const std::size_t totalSamples = input.samples.size();
+    // Feed the file plus `latencySamples` of trailing silence.
+    std::vector<float> padded = input.samples;
+    padded.resize(padded.size() + latencySamples, 0.0f);
+    std::vector<float> rendered(padded.size(), 0.0f);
+
+    const std::size_t totalSamples = padded.size();
     std::size_t offset = 0;
     while (offset < totalSamples) {
         // Feed fixed 256-sample blocks. The final block is almost always
@@ -139,10 +164,16 @@ int main(int argc, char** argv) {
         const std::size_t blockLen = remaining < static_cast<std::size_t>(kBlockSize)
                                          ? remaining
                                          : static_cast<std::size_t>(kBlockSize);
-        engine.process(input.samples.data() + offset, output.samples.data() + offset,
+        engine.process(padded.data() + offset, rendered.data() + offset,
                        static_cast<int>(blockLen));
         offset += blockLen;
     }
+
+    // Drop the leading `latencySamples`: those are the corrector's start-up,
+    // not the file's first samples. What remains is exactly as long as the
+    // input and lines up with it sample for sample.
+    output.samples.assign(rendered.begin() + static_cast<std::ptrdiff_t>(latencySamples),
+                          rendered.end());
 
     // --- Write output ---------------------------------------------------------
     try {

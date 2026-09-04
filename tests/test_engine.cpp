@@ -254,13 +254,63 @@ TEST_CASE("Engine: FR2 -- unvoiced (non-silent) audio passes through bit-identic
 
     engine.process(in.data(), out.data(), kBlockSamples);
 
-    // Exact equality: FR2 requires the signal to pass through *untouched*,
-    // not merely quiet or approximately similar.
+    // Exact equality holds here because ResampleCorrector is bit-transparent
+    // at unity ratio. Since D6 the bypass routes through the corrector rather
+    // than copying, so this is a property of THIS corrector, not of Engine:
+    // a lossy corrector (SignalsmithCorrector's STFT) will not be sample-exact
+    // here, and FR2 does not require it to be -- it requires *uncorrected*,
+    // and unity ratio applies no correction. The latency-consistency test
+    // below is what pins Engine's own behaviour.
     REQUIRE(out.size() == in.size());
     for (std::size_t i = 0; i < in.size(); ++i) {
         CAPTURE(i);
         CHECK(out[i] == in[i]);
     }
+}
+
+TEST_CASE("Engine: FR2 -- the unvoiced bypass runs THROUGH the corrector (tasks.md D6)") {
+    // The bug this pins: the bypass used to copy input straight to output,
+    // giving it ZERO latency while corrected audio came out delayed by the
+    // corrector's own latency. Two paths, two latencies, so at every
+    // voiced/unvoiced boundary the bypassed audio arrived ahead of the
+    // corrected audio it should have followed and overwrote its tail.
+    //
+    // Measured on the real pipeline before the fix, with a 300 ms silent
+    // gap in a tone and a 140 ms-latency corrector: the gap came out 260 ms
+    // long and 40 ms early. In singing, every consonant and every breath is
+    // such a boundary.
+    //
+    // A stub corrector with a non-zero declared latency is the honest way to
+    // test this: it lets us assert that the unvoiced path is routed through
+    // the same component as the voiced path, which is what makes the two
+    // latencies identical no matter which corrector is installed.
+    constexpr opentune::PitchEstimate kUnvoiced{0.0f, 0.0f, false};
+    StubPitchDetector detector(kUnvoiced);
+    opentune::ScaleQuantizer quantizer({0, opentune::ScaleType::Chromatic});
+    StubPitchCorrector corrector(/*latencySamples=*/6720); // 140 ms at 48 kHz
+    opentune::Params params;
+
+    opentune::Engine engine(detector, quantizer, corrector, params);
+
+    constexpr int kBlockSamples = 256;
+    engine.prepare(kSampleRate, kBlockSamples);
+    engine.reset();
+
+    const std::vector<float> in = opentune::test::whiteNoise(kBlockSamples, /*seed=*/999u);
+    std::vector<float> out(static_cast<std::size_t>(kBlockSamples), 0.0f);
+
+    engine.process(in.data(), out.data(), kBlockSamples);
+
+    // The corrector must have been called even though the input is unvoiced.
+    // Before the fix this was 0: the bypass returned without touching it.
+    CHECK(corrector.callCount == 1);
+    // ...and called at unity, so no pitch correction is applied (FR2).
+    CHECK(corrector.lastRatio == doctest::Approx(1.0f));
+    CHECK(corrector.lastN == kBlockSamples);
+
+    // Engine's reported latency stays the corrector's, for voiced and
+    // unvoiced alike -- there is only one path now, so there is one latency.
+    CHECK(engine.latencySamples() == 6720);
 }
 
 TEST_CASE("Engine: process() delivers the quantize-derived ratio to the corrector") {
