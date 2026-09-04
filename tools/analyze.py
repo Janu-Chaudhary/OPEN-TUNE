@@ -28,6 +28,7 @@ imported by, or become a runtime dependency of, anything under engine/.
 from __future__ import annotations
 
 import argparse
+import struct
 import sys
 from dataclasses import dataclass
 
@@ -103,6 +104,107 @@ HOP_SIZE = 512
 A4_HZ = 440.0
 A4_MIDI = 69
 
+# --------------------------------------------------------------------------
+# WAV `fmt ` chunk handling (tasks.md D9).
+#
+# scipy.io.wavfile.read does honour the fmt chunk internally -- it will
+# decode a genuinely 32-bit-float file as float32, not as int16 -- so this
+# tool was never *forced* to reimplement WAV parsing. But it must not
+# *trust* that silently either. D9 happened for real during triage of the
+# owner's recordings: a WAV reader that assumed 16-bit PCM regardless of
+# what the file declared reinterpreted 32-bit float samples as pairs of
+# int16s. That doesn't crash -- it manufactures plausible-looking broadband
+# noise, flattens the RMS envelope, and halves the reported duration, and it
+# produced a confident, entirely wrong verdict about real audio before being
+# caught. The tell was six independent recordings all reporting RMS
+# 0.5403-0.5414 -- identical to four decimal places, which is impossible for
+# real audio and is exactly what reinterpreting near-white bit patterns as
+# samples looks like.
+#
+# So load_mono() below re-parses the fmt chunk itself, independent of
+# scipy, and ASSERTS that (a) the format/bit-depth combination is one this
+# tool actually knows how to interpret and (b) the dtype scipy handed back
+# actually matches what the fmt chunk declares. Anything else fails loudly
+# with a clear message instead of silently guessing -- a bug this cheap to
+# detect (see test_analyze.py's regression test) should never recur
+# silently.
+WAVE_FORMAT_PCM = 1
+WAVE_FORMAT_IEEE_FLOAT = 3
+WAVE_FORMAT_EXTENSIBLE = 0xFFFE
+
+# The last 14 bytes of every KSDATAFORMAT_SUBTYPE_* GUID used inside a
+# WAVEFORMATEXTENSIBLE fmt chunk are this fixed suffix; the first two bytes
+# vary and equal the plain-format code (1 = PCM, 3 = IEEE float) the
+# extensible header is standing in for.
+_SUBTYPE_GUID_SUFFIX = bytes.fromhex("0000000010008000" "00aa00389b71")
+
+# (audioFormat, bitsPerSample) combinations this tool knows how to decode,
+# and the numpy dtype scipy.io.wavfile.read must have produced for each one.
+# Anything not in this table (24-bit PCM, 8-bit unsigned PCM, mu-law/A-law,
+# 64-bit float, ...) is refused rather than guessed at -- extend this table
+# deliberately if a new case shows up, don't remove the check.
+_SUPPORTED_WAV_FORMATS: dict[tuple[int, int], np.dtype] = {
+    (WAVE_FORMAT_PCM, 16): np.dtype(np.int16),
+    (WAVE_FORMAT_PCM, 32): np.dtype(np.int32),
+    (WAVE_FORMAT_IEEE_FLOAT, 32): np.dtype(np.float32),
+}
+
+
+@dataclass
+class WavFmt:
+    audio_format: int
+    channels: int
+    sample_rate: int
+    bits_per_sample: int
+
+
+def read_fmt_chunk(path: str) -> WavFmt:
+    """Parse the WAV `fmt ` chunk directly, independent of scipy.
+
+    This walks the RIFF chunk list by hand (id + little-endian u32 size,
+    chunks word-aligned) looking for `fmt `, rather than assuming it is
+    always the first chunk after the 12-byte RIFF/WAVE header -- some
+    writers put a JUNK/LIST chunk first. Raises ValueError if the file is
+    not RIFF/WAVE or has no fmt chunk at all; that is a malformed-file
+    error, not a format-tag mismatch, so it is not folded into the D9
+    assertion below.
+    """
+    with open(path, "rb") as f:
+        header = f.read(12)
+        if len(header) < 12 or header[0:4] != b"RIFF" or header[8:12] != b"WAVE":
+            raise ValueError(f"'{path}': not a RIFF/WAVE file")
+
+        while True:
+            chunk_header = f.read(8)
+            if len(chunk_header) < 8:
+                raise ValueError(f"'{path}': no fmt chunk found")
+            chunk_id = chunk_header[0:4]
+            chunk_size = struct.unpack("<I", chunk_header[4:8])[0]
+
+            if chunk_id == b"fmt ":
+                body = f.read(chunk_size)
+                if len(body) < 16:
+                    raise ValueError(f"'{path}': fmt chunk is truncated")
+                audio_format, channels, sample_rate, _byte_rate, _block_align, \
+                    bits_per_sample = struct.unpack("<HHIIHH", body[:16])
+
+                # WAVE_FORMAT_EXTENSIBLE (used by files with >2 channels or
+                # >16-bit depths written by some tools) hides the real
+                # format inside a sub-format GUID rather than the plain
+                # audioFormat field -- unwrap it so the table lookup above
+                # still works.
+                if audio_format == WAVE_FORMAT_EXTENSIBLE and len(body) >= 40:
+                    subtype_code = struct.unpack("<H", body[24:26])[0]
+                    if body[26:40] == _SUBTYPE_GUID_SUFFIX:
+                        audio_format = subtype_code
+
+                return WavFmt(audio_format=audio_format, channels=channels,
+                              sample_rate=sample_rate, bits_per_sample=bits_per_sample)
+
+            # Chunks are word-aligned: an odd-sized chunk has one pad byte
+            # after it that is not part of chunk_size.
+            f.seek(chunk_size + (chunk_size & 1), 1)
+
 
 def hz_to_midi(hz: np.ndarray) -> np.ndarray:
     """Convert Hz to (fractional) MIDI note number, NaN-safe.
@@ -143,7 +245,36 @@ def load_mono(path: str) -> tuple[np.ndarray, int]:
     its input (tools/autotune-cli/WavFile.h) so a side-by-side comparison
     is apples to apples.
     """
+    fmt = read_fmt_chunk(path)
+    expected_dtype = _SUPPORTED_WAV_FORMATS.get((fmt.audio_format, fmt.bits_per_sample))
+    if expected_dtype is None:
+        raise AssertionError(
+            f"'{path}': unhandled WAV format -- audioFormat={fmt.audio_format}, "
+            f"bitsPerSample={fmt.bits_per_sample}. Refusing to guess how to decode "
+            f"this (tasks.md D9); add it to _SUPPORTED_WAV_FORMATS deliberately "
+            f"if it needs to be supported."
+        )
+
     sample_rate, data = wavfile.read(path)
+
+    # Defense in depth: scipy is trusted to decode the samples correctly,
+    # but not trusted *silently*. If what it handed back doesn't match what
+    # the fmt chunk we parsed ourselves declares, something is inconsistent
+    # (a scipy behaviour change, a malformed/edited file, a mismatched
+    # channel count) and guessing which one is right is exactly the D9
+    # failure mode. Fail loudly instead.
+    if sample_rate != fmt.sample_rate:
+        raise AssertionError(
+            f"'{path}': fmt chunk declares sampleRate={fmt.sample_rate} Hz but "
+            f"scipy decoded {sample_rate} Hz -- refusing to guess which is right."
+        )
+    if data.dtype != expected_dtype:
+        raise AssertionError(
+            f"'{path}': fmt chunk declares audioFormat={fmt.audio_format}, "
+            f"bitsPerSample={fmt.bits_per_sample} (expects {expected_dtype} samples) "
+            f"but scipy decoded dtype={data.dtype} -- refusing to analyze a file "
+            f"whose declared format and decoded samples disagree (tasks.md D9)."
+        )
 
     if data.ndim > 1:
         data = data.mean(axis=1)
@@ -313,7 +444,8 @@ def print_summary(label: str, track: PitchTrack) -> None:
         print("  RMS range: n/a (empty file)")
 
 
-def cents_error_summary(track_a: PitchTrack, track_b: PitchTrack) -> None:
+def cents_error_summary(track_a: PitchTrack, track_b: PitchTrack,
+                         rate_a: int, rate_b: int) -> None:
     """Compare two pitch tracks (e.g. corrected output vs. a target) in
     cents -- the perceptually-linear unit for pitch error (100 cents = one
     semitone), matching how the rest of this project measures pitch error
@@ -322,7 +454,23 @@ def cents_error_summary(track_a: PitchTrack, track_b: PitchTrack) -> None:
     Frames are compared only where BOTH tracks call the frame voiced --
     comparing a real pitch against a NaN from an unvoiced frame is
     meaningless and would either crash or silently corrupt the summary.
+
+    Comparison is by frame INDEX, not by the `times` value -- track_a[i]
+    is compared against track_b[i]. times[i] = (i*HOP_SIZE + FRAME_SIZE/2)
+    / sample_rate, so index i only lines up to the same instant in both
+    files when both were analyzed at the same sample rate. If the rates
+    differ this would silently compare frames from two different points in
+    time and report a cents number that looks precise but means nothing --
+    refuse instead.
     """
+    if rate_a != rate_b:
+        print("--- Cents error (vs. reference) ---")
+        print(f"  input is {rate_a} Hz, reference is {rate_b} Hz -- frame index i means "
+              f"a different point in time in each track at different sample rates, so "
+              f"comparing by index would silently misalign them. Not computing a cents "
+              f"error; resample one file to match the other first.")
+        return
+
     n = min(len(track_a.times), len(track_b.times))
     both_voiced = track_a.voiced[:n] & track_b.voiced[:n]
 
@@ -442,17 +590,42 @@ def make_plot(path: str, samples: np.ndarray, sample_rate: int, track: PitchTrac
     # streak across all frequencies), buzz/aliasing from a corrector
     # collapsing to a block-rate staircase (extra harmonic combs), or noise
     # floor changes.
+    #
+    # D8 (OOM on real files): the raw sxx array itself was never the
+    # problem -- even take04.wav's full ~96 s only produces a ~37 MB float64
+    # grid. The actual cause was rendering it with
+    # `pcolormesh(..., shading="gouraud")`: Agg builds gouraud-shaded quads
+    # per-vertex, and for an ~9000-column mesh that pushed this process past
+    # 4 GB RSS and into the OOM killer (measured; see docs/decisions/). Two
+    # independent fixes, both kept: (1) `imshow` on a regular time/frequency
+    # grid -- which a spectrogram always is -- rasterizes directly from the
+    # array with no per-vertex blow-up, and (2) the column count is capped
+    # so memory and render time stay bounded no matter how long the input
+    # is, rather than growing without limit on some future longer take.
+    # imshow also does not interpolate colors between STFT bins the way
+    # gouraud shading did -- gouraud was quietly implying a smoothness
+    # between adjacent time/frequency bins that was never actually measured,
+    # which is exactly the kind of misleading-picture failure this tool
+    # exists to avoid (CLAUDE.md: this PNG is the only way an agent
+    # perceives the audio).
+    MAX_SPEC_COLUMNS = 4000
     nperseg = min(1024, len(samples)) if len(samples) > 0 else 1
     if len(samples) >= 2:
+        default_hop = max(1, nperseg // 2)
+        hop = max(default_hop, len(samples) // MAX_SPEC_COLUMNS)
+        noverlap = max(0, min(nperseg - 1, nperseg - hop))
         freqs, spec_times, sxx = sp_signal.spectrogram(
-            samples, fs=sample_rate, nperseg=nperseg, noverlap=nperseg // 2)
+            samples, fs=sample_rate, nperseg=nperseg, noverlap=noverlap)
         # dB scale (log power) is what makes quiet harmonics visible
         # alongside a loud fundamental -- linear power would make everything
         # but the loudest bin look black. Floor at 1e-12 avoids log(0).
         sxx_db = 10.0 * np.log10(np.maximum(sxx, 1e-12))
-        mesh = ax_spec.pcolormesh(spec_times, freqs, sxx_db, shading="gouraud", cmap="magma")
+        im = ax_spec.imshow(
+            sxx_db, origin="lower", aspect="auto", cmap="magma",
+            extent=(spec_times[0], spec_times[-1], freqs[0], freqs[-1]),
+        )
         ax_spec.set_ylim(0, min(MAX_F0_HZ * 4, sample_rate / 2))
-        fig.colorbar(mesh, ax=ax_spec, label="Power (dB)", pad=0.01)
+        fig.colorbar(im, ax=ax_spec, label="Power (dB)", pad=0.01)
     else:
         ax_spec.text(0.5, 0.5, "signal too short for a spectrogram",
                      ha="center", va="center", transform=ax_spec.transAxes)
@@ -493,7 +666,7 @@ def main() -> int:
         ref_samples, ref_rate = load_mono(args.ref)
         ref_track = analyze(ref_samples, ref_rate)
         print_summary(args.ref, ref_track)
-        cents_error_summary(track, ref_track)
+        cents_error_summary(track, ref_track, sample_rate, ref_rate)
 
     make_plot(args.input, samples, sample_rate, track, out_path)
     print(f"report written to {out_path}")
