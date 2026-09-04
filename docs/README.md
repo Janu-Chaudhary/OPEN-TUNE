@@ -34,6 +34,7 @@ either should be, or should not exist.
 | 0006 | AC4 is reachable — latency is a configuration knob; low-pitch resolution is the real limit |
 | 0007 | What YIN's CMND actually buys — it does not break the octave tie; the threshold does |
 | 0008 | AC7 fails and is fixable; AC2 is not measurable with algorithm-derived labels |
+| 0009 | YIN's absolute threshold made relative — the fix for every octave error (D10) |
 
 ## Guards
 

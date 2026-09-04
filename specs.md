@@ -263,6 +263,27 @@ promoting tonic identification to Stage 2.5; it is not a theoretical concern. Th
 cross-checks: the same singer measured on two independent recordings gave A = 446.0 and 444.9 Hz,
 4 cents apart.
 
+**AC2 / AC7 status (2026-09-04, superseding the note below).** Both are now **measured and
+passing** against the synthetic reference set, whose labels are exact by construction and verified
+to 0.08 cents — roughly 1000x tighter than the tolerance being tested:
+
+| | YIN | Autocorrelation | Bar |
+|---|---|---|---|
+| AC1 | **0.21 ¢** | 1206 ¢ | ±5 ¢ |
+| AC2 | **96.10%** | 87.51% | ≥95% |
+| AC6 | **0.00%** | 0.00% | <5% |
+| AC7 | **0.000%** | 8.464% | <1% |
+
+Excludes the `even_harmonics_only` case, which is a behaviour pin rather than a test: that signal
+genuinely repeats at P/2, so reporting 2·f0 is correct (see `docs/decisions/0003`).
+
+**AC7 is not yet met on real recordings** — 3.28% across the owner's six takes, concentrated in
+one (take04 at 10.90%, every other take ≤1.73%). Tracked as D12. Whether take04's *labels* are
+octave-correct there is itself unestablished, since they come from window-based estimators that
+share the period-doubling ambiguity they are being used to judge.
+
+The original note stands as the reason the synthetic set had to exist:
+
 **AC2 note (2026-09-04).** AC2 cannot be established against algorithm-derived labels. The
 T1.0 reference set's own estimators disagree with each other by a median 8.4 cents and by more
 than 15 cents on 25.7% of the frames they agree on — the instrument's resolution is the size of

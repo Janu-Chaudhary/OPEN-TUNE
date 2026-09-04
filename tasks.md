@@ -191,7 +191,13 @@ That list is the agenda for Stages 1 and 2.
 ## Stage 1 — Detect pitch properly
 *Goal: meet AC1, AC2, AC7. This is where you learn how pitch detection actually works.*
 
-- [ ] **T1.0** — Build the reference vocal set. **Rewritten 2026-09-04: the original method was
+- [x] **T1.0** — Build the reference vocal set. **Done 2026-09-04** — 15 files: the owner's six
+  takes, eight third-party sung references and one 13.6-minute Hindi lecture (the only spoken
+  material), plus 33 synthetic source-filter cases with exact ground truth. Roughly 100–1100 Hz
+  across nine voices, four measured tuning references spanning ~50 cents. Third-party audio is
+  gitignored and local-validation-only; labels and manifest are committed.
+  **Still missing, and only the owner can supply it: a deliberately off-pitch take.** Every voice
+  in the set sings accurately, so the set can demonstrate a *detector* works but not a *corrector*. **Rewritten 2026-09-04: the original method was
   infeasible.** It said "pitch hand-labelled per frame" — nobody does that. At ~100 frames/second
   a 30-second take is 3000 frames, and no ear resolves ±15 cents per frame on a moving voice.
   Real practice uses a laryngograph, or annotator-corrected algorithmic tracks. Composition
@@ -227,7 +233,7 @@ That list is the agenda for Stages 1 and 2.
 - [x] **T1.7** — Voiced/unvoiced decision from the aperiodicity measure (AC6). Silence
   aperiodicity 1.0, white noise 0.907–0.929 across 5 seeds, clean sine <0.01; threshold 0.2,
   provisional pending T1.8. A quiet-sine test proves confidence is not a disguised loudness meter
-- [~] **T1.8** — Verify AC1, AC2, AC7 against a labelled vocal set. **Split, 2026-09-04:**
+- [~] **T1.8** — Verify AC1, AC2, AC7 against a labelled vocal set. **Split, 2026-09-04. Synthetic: all four criteria PASS. Real recordings: AC7 outstanding (D12), AC2 unmeasurable there by construction.**
   - **AC1 — PASSED.** YIN measures 0.002–0.375 cents across 65–1099 Hz against a ±5 cent bar
     (controller-verified). Autocorrelation reaches −14.4 cents.
   - **AC7 — FAILS, and is actionable.** 8.08% octave errors overall, 14.25% on take04, against
