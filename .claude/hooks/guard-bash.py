@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""PreToolUse guard for Bash. See constitution.md IX.
+"""PreToolUse guard for Bash. See constitution.md IX and CLAUDE.md "Audio and verification".
 
-Denies commands that would act as the wrong GitHub identity or bypass the
-repository's git hooks. Reads the hook JSON on stdin, writes a decision on stdout.
+Denies commands that would act as the wrong GitHub identity, bypass the
+repository's git hooks, or dump raw audio bytes into the agent's context.
+Reads the hook JSON on stdin, writes a decision on stdout.
 """
 import json, re, sys
 
@@ -45,6 +46,17 @@ RULES = [
      "Plain github.com authenticates as janu-droid. Use the github-januchaudhary: alias."),
     (r"\bgit\s+config\b.*user\.(email|name)\b(?!.*(januchaudhary2004@gmail\.com|Janu-Chaudhary))",
      "Only Janu-Chaudhary <januchaudhary2004@gmail.com> may be set. Constitution IX."),
+    (r"(?m)(^|[;&|(]|\$\()\s*(cat|head|tail|less|more|strings|xxd|od|hexdump|base64)\b"
+     r"[^;&|\n]*\.(wav|flac|mp3|aac|ogg|m4a|aiff?|mp4)\b(?![\w.])",
+     "Audio files must not be dumped into context (binary poisons it). "
+     "Use .venv/bin/python tools/analyze.py <file> for pitch/cents/spectrogram instead. "
+     "CLAUDE.md 'Audio and verification'."),
+    # No command-position anchor here: `$(...)` and `` `...` `` execute wherever they
+    # appear (even inside double quotes), so this doesn't need to be an anchored rule
+    # the way plain command names do.
+    (r"\$\(\s*<\s*[^)\n]*\.(wav|flac|mp3|aac|ogg|m4a|aiff?|mp4)\b[^)\n]*\)",
+     "`$(< file)` reads the whole audio file into context, same as cat. "
+     "Use .venv/bin/python tools/analyze.py <file> instead. CLAUDE.md 'Audio and verification'."),
 ]
 
 for pattern, reason in RULES:
@@ -53,7 +65,7 @@ for pattern, reason in RULES:
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
-                "permissionDecisionReason": "BLOCKED by OpenTune identity guard: " + reason,
+                "permissionDecisionReason": "BLOCKED by OpenTune guard: " + reason,
             }
         }))
         sys.exit(0)
