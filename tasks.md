@@ -450,20 +450,37 @@ performers, not this user.
   reporting RMS 0.5403–0.5414 — identical to four decimal places, which is impossible for real
   audio.** Add a format-tag assertion so this fails loudly instead of silently.
 
-- [ ] **D10 — `YinDetector`'s threshold fallback guesses when it should abstain.** When no lag
+- [x] **D10 — `YinDetector`'s threshold fallback guesses when it should abstain.** *(fixed `5d1b1f7`; the diagnosis below was half right — see the correction at the end of this entry)* When no lag
   clears `kAbsoluteThreshold`, it takes the global CMND minimum. Measured on synthetic breathy
   voices, that is the sole source of YIN's octave errors — 100% of frames fall back at HNR 5 dB,
   and the wrong answer ships as confidently voiced. Options: widen the search before giving up,
   add a cross-frame continuity constraint, or report unvoiced rather than guess. **This is the fix
   for AC7**; the voicing threshold is not. Source: synthetic set, T1.0.
+  **Fixed, and the diagnosis was incomplete.** The fallback was only half the mechanism: at
+  HNR 10 dB the errors come from step 3 *proper* — `d'(P)` ≈ 0.117 just above the fixed 0.1 while
+  `d'(2P)` ≈ 0.088 just below, so first-crossing fires at the octave without ever reaching the
+  fallback. Fixing the fallback alone plateaus at 9.19%. What shipped is a *relative* threshold,
+  `max(kAbsoluteThreshold, 2.0 × min d')`, which subsumes the fallback entirely.
+  **Result: AC7 0.000%, AC2 96.10% — both pass on synthetic.** Real takes 8.08% → 3.19%, still
+  above 1%, with take04 alone carrying 82% of the remainder (see D12).
+  Abstaining was measured and rejected: it would leave **28.2% of the owner's voiced sung frames
+  uncorrected**.
 
-- [ ] **D11 — `score_detectors.py`'s analysis-lag offset is wrong.** It assumes 23.09 ms; the
+- [x] **D11 — `score_detectors.py`'s analysis-lag offset is wrong.** *(fixed: 23.09 → 30.79 ms)* It assumes 23.09 ms; the
   optimum measured against exact synthetic labels is 29.25–30.25 ms, one constant across a tenfold
   velocity range, and it matches the geometry — YIN sums over `buffer[0..W)` whose centre is
   2218 − 739 = 1479 samples = 30.81 ms back, not the buffer midpoint. Correcting it rewrites
   T1.8's real-take numbers, so it is deliberately unchanged pending that re-run. **Note it does
   NOT explain the velocity gradient** — re-running decision 0008's bins at both offsets moves them
   under 2 points. Source: synthetic set, T1.0.
+
+- [ ] **D12 — real-take AC7 is 3.19%, and take04 carries 82% of it.** D10 took the real set from
+  8.08% to 3.19%, a genuine improvement on matched frames (2434 → 1062 octave errors), but not
+  under AC7's 1% bar. Five takes sit at or under ~1.6%; take04 alone is 10.62%. Three things are
+  unestablished and this needs its own task rather than being absorbed into D10: whether take04's
+  own labels are octave-correct there (a 2-of-3 consensus of window-based estimators shares the
+  period-doubling ambiguity it is being used to judge), whether the synthetic set covers its worst
+  passages, and what the residual mechanism actually is.
 
 *Seven further minor review findings are held in `.superpowers/sdd/tasks/progress.md`
 for the whole-branch review at the end of Stage 0.*

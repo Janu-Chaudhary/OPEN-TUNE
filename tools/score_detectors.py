@@ -46,8 +46,22 @@ DETECTORS = ["yin", "autocorr"]
 # Offset applied to the detector's block-end timestamp, in seconds, to place its
 # estimate at the centre of the audio it actually analysed.  At 48 kHz the
 # detectors buffer 1478 comparison samples plus a 739-sample maximum lag reach =
-# 2217 samples; half of that is 1108.5 samples = 23.09 ms.
-DEFAULT_OFFSET_S = 1108.5 / 48000.0
+# D11, corrected 2026-09-04.  The old value was 1108.5/48000 = 23.09 ms, half
+# the 2217-sample BUFFER.  But the buffer is not the analysis window.  YIN sums
+# d(tau) over buffer[0..W) with W = kAnalysisWindowLagMultiple * maxLag = 2*739
+# = 1478; the further 740 samples exist only so the widest lag's comparison
+# stays in bounds.  An estimate therefore describes the centre of that window,
+# which sits (bufferSize-1) - W/2 = 2217 - 739 = 1478 samples behind the newest
+# sample handed in -- 30.79 ms at 48 kHz, not 23.09.
+#
+# Half-the-buffer would be right for a detector with W = maxLag; that geometry
+# gives 23.10 ms exactly, which is why the old constant looked plausible.  It
+# was correct for a window this detector no longer uses.
+#
+# Confirmed from both directions: the geometry above, and an empirical scan
+# against the synthetic set's exact labels, which put the optimum at
+# 29.25-30.25 ms -- one constant across a tenfold range of contour velocity.
+DEFAULT_OFFSET_S = 1478.0 / 48000.0
 
 # Offsets scanned when reporting alignment sensitivity, in milliseconds.
 SCAN_MS = [0.0, 5.0, 10.0, 15.0, 18.0, 20.0, 21.0, 22.0, 23.09, 24.0, 25.0, 26.0, 28.0, 30.0, 35.0, 40.0]
@@ -179,7 +193,7 @@ def main():
             tot = float(sum(wts))
             cells.append("%10.2f %10.4f" % (sum(meds) / tot, sum(w15) / tot))
         print("  %9.2f   %s   %s" % (ms, cells[0], cells[1]))
-    print("  scored at offset %.2f ms (half the detectors' 2217-sample buffered span)\n"
+    print("  scored at offset %.2f ms (centre of the 1478-sample analysis window)\n"
           % (DEFAULT_OFFSET_S * 1000.0))
 
     for take in takes:
