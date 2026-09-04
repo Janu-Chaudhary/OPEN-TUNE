@@ -35,6 +35,7 @@ either should be, or should not exist.
 | 0007 | What YIN's CMND actually buys — it does not break the octave tie; the threshold does |
 | 0008 | AC7 fails and is fixable; AC2 is not measurable with algorithm-derived labels |
 | 0009 | YIN's absolute threshold made relative — the fix for every octave error (D10) |
+| 0010 | take04's AC7 excess is a real detector error; no step-3 rule fixes it without regressing synthetic (D12) |
 
 ## Guards
 
@@ -86,6 +87,7 @@ arrived. If a skill's instructions reference files it does not ship, it is a plu
 | `tests/` | All automated tests; `tests/support/Signals.h` generates known-answer input | 0+ |
 | `tools/autotune-cli/` | WAV in → WAV out harness | 0 |
 | `tools/analyze.py` | How Claude sees audio: pitch track + spectrogram PNG | 0 |
+| `tools/d12_octave_evidence.py` | Adjudicates an octave dispute between a detector and the reference labels on spectral evidence independent of both, against a calibrated control (decision 0010) | 1 |
 | `tools/autotune-live/` | Real-time microphone monitor | 3 |
 | `apps/desktop/` | Minimal desktop GUI | 6 |
 | `apps/android/` | Android app | 7 |

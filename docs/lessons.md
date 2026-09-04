@@ -183,3 +183,35 @@ caught it — the control was already sitting in the same directory.
 Worth noting how it surfaced: a subagent re-measured, got a different answer by a different method,
 and said so plainly instead of deferring. It was right to, and the brief had explicitly asked it to
 report disagreement. Asking for that costs one sentence and it has now paid twice.
+
+---
+
+## L6 — A defect rate with no sign attached sent the diagnosis to the wrong place
+**Found:** D12, by the implementer, in the first table it printed.
+
+D12 handed over a lead: take04's octave errors are octave-**LOW** and rise with pitch, "reaching
+14.6% above 420 Hz". Both halves are defensible readings of an earlier measurement and both are
+wrong about where the defect lives. Measured with the sign kept: 7.78 of take04's 10.90 points are
+octave-**HIGH**, and they concentrate at 260–320 Hz — the *middle* of the take's range, holding 70%
+of its frames — not at the top. The octave-low-with-pitch effect is real and worth 0.46 points: 103
+frames above 420 Hz, 36 of them wrong.
+
+The cost was not hypothetical. The lead points at the threshold being too tight; the actual defect
+is the threshold firing too early, which is the opposite repair. An hour of the investigation went
+into the high-pitch band before the direction was checked.
+
+**Why it was missed:** AC7 is specified as one number — "octave errors under 1%" — and every report
+since T1.0 has quoted it as one number. `score_detectors.py` computes it as
+`|abs(error) - 1200| <= 20`, which throws the sign away in the same expression that finds the error.
+Two failure modes with opposite fixes were being summed into one statistic, and D10 had just changed
+their mix (715 → 242 low, 581 → 605 high on take04), so the pooled number moved for reasons the
+number could not show.
+
+**What changed:** an octave-error rate is **always reported signed** — high, low, total — and any
+claim about "the octave errors" names the direction. The same goes for any defect statistic built
+from an absolute value: taking `abs()` is discarding evidence, and it is worth one extra column to
+keep it. Decision 0010's tables are the shape to copy.
+
+The generalisation of L5 this adds: L5 says check the instrument's *resolution* before believing a
+measurement. This says check what the instrument **summed together** to produce it. A number can be
+perfectly precise and still be a mixture of two populations that want opposite treatments.
