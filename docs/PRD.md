@@ -86,6 +86,32 @@ Wants to understand how pitch correction actually works, by reading working code
 expected behaviour.
 **Fails if:** the code is clever rather than clear.
 
+
+## Market decision — Hindi first (2026-09-04)
+
+The owner set Hindi/Indian film music as the primary market. This is a product decision with
+engine consequences, recorded here because the spec records *what* and this records *why*.
+
+**Why it is a real wedge, not a localisation.** The competitive audit at the top of this
+document found the category leader is skewed toward rap and hard-tune, and weak for actual
+singing. It is also built entirely around Western scales. An Indian creator singing a film-song
+cover gets their notes snapped to a chromatic or major-scale grid that has nothing to do with
+the raga the song is in. That is not a rough edge; it is the tool being wrong about the music.
+No incumbent serves it, and it is the one audience where "better Voloco" is not the pitch.
+
+**What it changes in the engine** (detail in `specs.md` §5 and FR5/FR6/FR16):
+- Raga note-sets, with ascending and descending sets that differ. Not a scale table.
+- Tonic identification rather than key detection — Sa moves with the singer.
+- *Meend* and ornaments must survive correction. `retuneMs` becomes the central control.
+
+**What it deliberately does not change.** Bollywood is harmonium-led and effectively 12-TET, so
+the equal-tempered maths already built stays valid, and classical 22-shruti just intonation is
+out of scope. Chasing microtonality would serve trained classical performers — a different,
+smaller audience — at the cost of the creator this product is for.
+
+**Consequence for the plan:** musical intelligence moved from Stage 5 to Stage 2.5, ahead of
+real time and the strength dial. Until it lands, every Hindi demo is musically wrong.
+
 ## 4. Jobs to be done
 
 | When… | I want to… | So that… |

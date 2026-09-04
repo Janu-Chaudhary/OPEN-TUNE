@@ -115,3 +115,15 @@ you think you need to.** Every T0.9 test corrected downward and none ran past 0.
 input domain was broken, the other half was broken more slowly, and the suite was green. That
 is L2 in a new costume twice over — the untested region was not a frequency band this time but
 a *sign*, and then a *duration*.
+
+**Second instance, 2026-09-04 (T1.2).** The same shape again, in a different place. Decision
+0003 predicted that a weak or missing fundamental would make `AutocorrelationDetector` report an
+octave high. An implementer wrote the test set, found all five predicted cases detected
+*correctly*, worked out why, and constructed a sixth case that does reproduce it. Measured, a
+missing fundamental scores 0.20 at half-period, nowhere near an ambiguity; only an
+even-harmonics-only signal reaches 1.0000, and that signal genuinely has the shorter period.
+
+The reasoning that produced 0003 was sound about the mechanism and wrong about the conditions —
+exactly L4's failure mode. **Predicted failure modes get reproduced before they are planned
+around.** Three of this project's records have now been corrected by someone who went and
+measured: a worked example, a seam risk, and this one.

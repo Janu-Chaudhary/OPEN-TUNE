@@ -26,9 +26,27 @@ still descending from the excluded lag-0 maximum, so an endpoint would be a fals
 
 ## Consequences
 - **The octave bias is inverted, not eliminated.** Global-max errs octave-low; first-peak errs
-  octave-**high**. On a voice with a weak or missing fundamental — telephone band, belted high
-  notes, many male vowels where H2 dominates H1 — the first qualifying peak is the first
-  harmonic, and the detector reports an octave too high.
+  octave-**high**.
+
+  **Corrected 2026-09-04 (T1.2), and the original claim here was too broad.** This record
+  asserted that a weak or missing fundamental — telephone band, belted notes, male vowels where
+  H2 dominates — would make the first qualifying peak the first harmonic. Measured, it does not.
+  Normalised autocorrelation at half the true period:
+
+  | Signal | r(P) | r(P/2) |
+  |---|---|---|
+  | Control, H1–H6 | 1.0000 | 0.0002 |
+  | Fundamental removed entirely | 1.0000 | 0.2004 |
+  | H2-dominant, H1 at −20 dB | 1.0000 | 0.5868 |
+  | **Even harmonics only** | 1.0000 | **1.0000** |
+
+  Removing H1 does not create an octave ambiguity, because the surviving **odd** harmonics are
+  not periodic at P/2 and destructively interfere there. The condition is stricter than this
+  record implied: the signal must be *genuinely* periodic at the shorter lag, which needs every
+  odd harmonic gone. And in that case reporting 2·f0 is not really an error — the waveform does
+  have that period; only human perception insists on the missing fundamental.
+
+  So the bias is real but far narrower than stated. T1.2 pins both behaviours with tests.
 - The 0.6 normalised-correlation threshold does double duty: peak qualification and final
   voicing. A harmonic peak on a real voice clears 0.6 comfortably, which is the precise
   mechanism of the octave-too-high error.

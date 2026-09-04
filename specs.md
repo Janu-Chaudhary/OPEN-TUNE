@@ -54,9 +54,24 @@ Deferred, not cancelled. Each becomes its own spec later.
 
 ## 5. Users
 
-**Primary — the short-form creator.** Records vocals on a phone for Reels/Shorts.
-Cannot read music, does not know what key they are singing in, will not read a manual.
-Needs: press record, sound good, export. Must work with zero configuration.
+**Primary — the Hindi-singing short-form creator.** Records vocals on a phone for
+Reels/Shorts, usually covering a film song. Cannot read music, does not know what key they
+are singing in, will not read a manual. Needs: press record, sound good, export. Must work
+with zero configuration.
+
+**Owner decision, 2026-09-04: Hindi/Indian film music is the primary market.** This is not a
+localisation choice, it changes the engine's musical model:
+- **Bollywood is effectively 12-TET** — it is harmonium-led — so the existing equal-tempered
+  quantizer maths stays valid. Classical 22-shruti just intonation is explicitly **out of
+  scope** (owner decision); it serves trained classical performers, not this user.
+- **Ragas are not scales.** Many use different notes ascending (*aroha*) than descending
+  (*avaroha*). A stateless nearest-allowed-note function cannot express that, because the
+  correct target depends on melodic direction. See FR5.
+- **Sa is movable.** Indian music places the tonic where the singer's voice sits, not at a
+  fixed A440. "Key detection" here means *tonic identification*. See FR6.
+- **Meend must survive.** The continuous slide between notes is the defining gesture of this
+  singing. Hard correction destroys it, which makes `retuneMs` (FR8) central rather than a
+  refinement. Ornaments — *murki*, *gamak*, *andolan* — are the same problem at other speeds.
 
 **Secondary — the developer.** Wants a free pitch correction engine for their own
 app, game, or plugin. Needs: clear interfaces, permissive licence, buildable in
@@ -199,8 +214,8 @@ which also records the incorrect reasoning FR15 was originally written on.
 | FR2 | Unvoiced input (silence, breath, consonants) passes through uncorrected |
 | FR3 | Engine snaps detected pitch to the nearest note of a selected scale |
 | FR4 | Chromatic scale requires no user configuration |
-| FR5 | User may select a key and scale type manually |
-| FR6 | Engine detects the key automatically from audio, with manual override always available |
+| FR5 | User may select a key and scale manually, including raga note-sets with distinct ascending (*aroha*) and descending (*avaroha*) sets |
+| FR6 | Engine identifies the tonic (Sa) automatically from audio, with manual override always available |
 | FR7 | `strength` continuously blends between no correction and full snap |
 | FR8 | `retuneMs` controls how quickly pitch glides to target, preserving scoops and vibrato at higher values |
 | FR9 | Formants are preserved when enabled, so correction does not produce the "chipmunk" artifact |
@@ -210,6 +225,7 @@ which also records the incorrect reasoning FR15 was originally written on.
 | FR13 | Desktop app allows recording, live monitoring, parameter adjustment, and WAV export |
 | FR14 | Android app provides the same core loop on a phone |
 | FR15 | Engine clamps the pitch ratio to a musical range before correction (defence-in-depth; does not bind under Stage 0's chromatic snapping) |
+| FR16 | Continuous pitch gestures — *meend*, and ornaments such as *murki* and *gamak* — survive correction at moderate `strength` and `retuneMs`; they are musical content, not error to be removed |
 
 ## 9. Acceptance criteria
 
@@ -265,9 +281,9 @@ That is the whole product working. If it does not happen, v1 is not done.
 | 0 | CLI + naive detector + naive corrector | The pipeline is alive and audible |
 | 1 | YIN pitch detection | Detection is accurate (AC1, AC2, AC7) |
 | 2 | Formants, latency accounting, A/B against the naive baseline | Quality (AC3, listening pass) |
+| 2.5 | **Musical intelligence — raga note-sets, tonic identification** *(promoted from stage 5, owner decision 2026-09-04)* | FR5, FR6 — without it, every Hindi demo snaps to the wrong notes |
 | 3 | Real-time host via miniaudio | Latency and stability (AC4, AC5, AC9) |
-| 4 | Full parameter set — strength, retune, humanize | The dial (G2, FR7–FR10) |
-| 5 | Key selection, then auto-detection | FR5, FR6 |
+| 4 | Full parameter set — strength, retune, humanize | The dial (G2, FR7–FR10, FR16) |
 | 6 | Desktop GUI app | FR13 |
 | 7 | Android app | FR14, AC8 |
 
@@ -290,6 +306,14 @@ needs its own approval at Stage 2 and Stage 3 respectively (constitution I).
 | doctest | MIT | Test framework | 0 | 
 
 Rejected: **Rubber Band** (GPL/commercial), **JUCE** (GPL/commercial), **aubio** (GPL).
+**Reference data (not shipped, not committed).** `Saraga` (CompMusic) carries expert-verified
+f0 annotations for Hindustani vocals — the best available for this market. Its **annotations are
+CC-licensed but its audio is copyrighted**, and CompMusic states plainly that copyright restricts
+many research uses. Owner decision 2026-09-04: **local validation only** — fetched on the machine
+that runs the measurement, gitignored, never committed, never redistributed, never shipped in any
+build. Anyone reading an AC2/AC7 figure derived from it should know it cannot become a shipped
+test fixture.
+
 Under consideration for Stage 2 if Signalsmith's formant handling proves insufficient:
 **WORLD vocoder** (modified BSD; authors state no patents encumber its algorithms).
 

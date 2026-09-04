@@ -133,7 +133,7 @@ upstream by the reviewer. `WavFile.h` is host code in `namespace opentune::host`
 under `engine/` references it (constitution IV). Vendored header is a `SYSTEM` include so
 strict warnings still apply to our own code — confirmed, not assumed.
 
-### T0.13 — Vendor Signalsmith Stretch `[ ]`
+### T0.13 — Vendor Signalsmith Stretch `[x]`
 `third_party/signalsmith-stretch/` plus its `signalsmith-linear` dependency, both MIT and
 both verified from their own licence text. Unmodified, with `LICENSE.txt` and `VENDORED.md`.
 **Depends on:** T0.1 · **Approved:** owner, 2026-09-04 (`docs/decisions/0005`)
@@ -141,7 +141,7 @@ both verified from their own licence text. Unmodified, with `LICENSE.txt` and `V
 flags (vendored code as a `SYSTEM` include, as dr_wav is), and a trivial round trip through
 it produces audio.
 
-### T0.14 — `SignalsmithCorrector` `[ ]`
+### T0.14 — `SignalsmithCorrector` `[x]`
 The real corrector, behind the existing `PitchCorrector` interface. Pulled forward from
 Stage 2 (T2.2) because `ResampleCorrector` cannot sustain any ratio ≠ 1.0 — see D5 and
 `docs/decisions/0005`. `ResampleCorrector` stays as the naive baseline for A/B work.
@@ -151,6 +151,9 @@ sustained over **at least 10 seconds** of audio — the duration is the point, s
 exactly what the naive corrector cannot do; block-size invariance holds; and `prepare()`
 performs all allocation, with `process()` demonstrated allocation-free rather than asserted
 to be (constitution II — the header uses `std::vector`, `std::function` and `std::random`).
+**Done 2026-09-04** (`c0c76d6`, fixed `181cb32`, re-review APPROVED). Latency 100 ms after the
+preset fix. Zero allocations confirmed by two independent probes. Both upstreams verified
+byte-identical to their recorded commits.
 
 ### T0.11 — CLI tool `[x]`
 `opentune-cli in.wav out.wav [--key C:major] [--strength 0.8]`.
@@ -188,9 +191,31 @@ That list is the agenda for Stages 1 and 2.
 ## Stage 1 — Detect pitch properly
 *Goal: meet AC1, AC2, AC7. This is where you learn how pitch detection actually works.*
 
-- [ ] **T1.0** — Build the reference vocal set: 5+ takes (male/female, sung/spoken), pitch hand-labelled per frame. AC2 and AC7 are unmeasurable without it
-- [ ] **T1.1** — Test harness measuring detection error in cents across the full range
-- [ ] **T1.2** — Octave-error test set (signals with weak or missing fundamentals)
+- [ ] **T1.0** — Build the reference vocal set. **Rewritten 2026-09-04: the original method was
+  infeasible.** It said "pitch hand-labelled per frame" — nobody does that. At ~100 frames/second
+  a 30-second take is 3000 frames, and no ear resolves ±15 cents per frame on a moving voice.
+  Real practice uses a laryngograph, or annotator-corrected algorithmic tracks. Composition
+  (owner decision, Hindi-first):
+  - **Owner's own Hindi recordings** — phone mic, film-song covers, untrained voice. The actual
+    product use case, and in no corpus anywhere. Labels derived algorithmically, owner sanity-checks.
+  - **Synthetic source-filter voices** — glottal pulse plus formants, with vibrato, jitter,
+    *meend*-style slides and missing fundamentals dialled in one at a time. Exact ground truth by
+    construction; the only way to isolate *why* a detector fails rather than *that* it did.
+  - **Hindi speech corpora** (IndicVoices-R, Common Voice Hindi) — many speakers, wide pitch
+    range. **Licences must be verified before use.**
+  - Western research sets (vocadito, PTDB-TUG) are *not* part of this set — owner decision.
+  Saraga is local-validation-only (copyrighted audio, see `specs.md` §11).
+  **Owner-dependent:** the recordings are yours; AC2 and AC7 stay unmeasurable until they exist.
+- [x] **T1.1** — Test harness measuring detection error in cents across the full range
+  **Done 2026-09-04** (`1a8f17f`). Baseline established for `AutocorrelationDetector` over
+  65–1100 Hz: median 3.58 ¢, mean 4.01 ¢, max 16.35 ¢ — **14 of 49 frequencies (29%) fail AC1's
+  ±5 ¢ bar**, worst at 932 Hz (+16.35 ¢). That is the number `YinDetector` must beat.
+- [x] **T1.2** — Octave-error test set (signals with weak or missing fundamentals)
+  **Done 2026-09-04** (`028a3f3`), and it **disproved decision 0003's prediction.** A missing or
+  weak fundamental does *not* induce an octave error — the surviving odd harmonics break
+  periodicity at half-period (measured r(P/2) = 0.20 for a removed fundamental, 0.59 for
+  H2-dominant). Only an even-harmonics-only signal reaches r(P/2) = 1.0, and that waveform
+  genuinely has the shorter period. 0003 and `docs/lessons.md` corrected.
 - [ ] **T1.3** — `YinDetector`: difference function
 - [ ] **T1.4** — YIN: cumulative mean normalised difference (this is the step that kills octave errors)
 - [ ] **T1.5** — YIN: absolute threshold and best-candidate selection
@@ -209,6 +234,29 @@ That list is the agenda for Stages 1 and 2.
 - [ ] **T2.5** — Latency accounting via `latencySamples()`
 - [ ] **T2.6** — A/B listening pass, naive vs Signalsmith, on the Stage 0 recordings
 - [ ] **T2.7** — Decision point (Q3): is Signalsmith's formant handling sufficient, or do we need WORLD?
+
+## Stage 2.5 — Musical intelligence *(promoted from Stage 5, owner decision 2026-09-04)*
+*Goal: FR5 and FR6. Promoted because Hindi/Indian film music is the primary market — a
+chromatic-only quantizer snaps a Hindi vocal to the wrong notes, so every demo before this
+point sounds wrong to the audience the product is for. Task IDs stay `T5.x`: they are
+referenced from `specs.md` and the decision records, and renaming them would break those.*
+
+**Scope decision:** Bollywood is harmonium-led and effectively **12-TET**, so the existing
+equal-tempered quantizer maths stays valid — raga note-sets sit on top of it. Classical
+22-shruti just intonation is **out of scope** (owner decision); it serves trained classical
+performers, not this user.
+
+- [ ] **T5.1** — Scale types beyond chromatic. Western major/minor/pentatonic **and raga
+  note-sets** for common film-song scales (FR5)
+- [ ] **T5.2** — Key/tonic selection API. Sa is movable in Indian music — the tonic goes where
+  the singer's voice sits, not to a fixed A440
+- [ ] **T5.6** — *(new)* Direction-dependent note sets: many ragas use different notes ascending
+  (*aroha*) than descending (*avaroha*). **`ScaleQuantizer::snap()` is currently a pure function
+  of frequency and cannot express this** — the correct target depends on where the melody is
+  going. This is an interface change, not a lookup table, and it needs a decision record
+- [ ] **T5.3** — Pitch-class histogram over a rolling window
+- [ ] **T5.4** — Tonic identification by correlation against scale profiles (FR6)
+- [ ] **T5.5** — Confidence reporting and manual override
 
 ## Stage 3 — Real time
 *Goal: meet AC4, AC5, AC9. Sing and hear yourself corrected.*
@@ -232,13 +280,6 @@ That list is the agenda for Stages 1 and 2.
 - [ ] **T4.5** — Formant preservation toggle
 - [ ] **T4.6** — Verify no clicks when parameters change mid-note (FR10)
 - [ ] **T4.7** — Listening pass across the full strength range
-
-## Stage 5 — Musical intelligence
-- [ ] **T5.1** — Scale types beyond chromatic — major, minor, harmonic minor, pentatonic (FR5)
-- [ ] **T5.2** — Key selection API
-- [ ] **T5.3** — Pitch-class histogram over a rolling window
-- [ ] **T5.4** — Key detection by correlation against key profiles (FR6)
-- [ ] **T5.5** — Confidence reporting and manual override
 
 ## Stage 6 — Desktop app
 - [ ] **T6.1** — Resolve Q5: GUI toolkit, given JUCE is licence-blocked
