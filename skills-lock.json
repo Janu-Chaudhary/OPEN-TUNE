@@ -1,12 +1,6 @@
 {
   "version": 1,
   "skills": {
-    "c-review": {
-      "source": "trailofbits/skills",
-      "sourceType": "github",
-      "skillPath": "plugins/c-review/skills/c-review/SKILL.md",
-      "computedHash": "c6d168c0b0bc90d67eb9861ce29315709cc06fe163fe672eb630ad1093d8dbba"
-    },
     "find-skills": {
       "source": "vercel-labs/skills",
       "sourceType": "github",

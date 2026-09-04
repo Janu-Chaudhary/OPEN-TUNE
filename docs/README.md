@@ -55,6 +55,24 @@ registry and recommends installable skills. Owner-requested 2026-09-04.
 prompt-injection surface regardless of licence — a permissive licence is not a safety
 property. `find-skills`' own Step 6 instructs installing further skills with `-g -y`
 (global, no confirmation); that is not followed without asking the owner.
+
+**Plugins** (installed at user level via `/plugin`, so nothing lands in this repo and there is
+no redistribution question). Restore with:
+
+```
+/plugin marketplace add trailofbits/skills
+/plugin install differential-review@trailofbits
+/plugin install c-review@trailofbits
+```
+
+| Plugin | Use it for | Note |
+|---|---|---|
+| `differential-review` | Second opinion on a task diff: test coverage of *modified* code, blast radius by caller count, git-blame regression check | Its risk taxonomy is auth/crypto/value-transfer, none of which this codebase has — expect thin security findings and judge it on the coverage and regression phases |
+| `c-review` | One-off memory-safety audit of `engine/` | 8–14 agents; needs `uv` on PATH. Worth running once YIN's buffer arithmetic exists, not before |
+
+Both were installed as *skills* first, which silently produced a `c-review` that could not run:
+`npx skills add` copies only `SKILL.md`, and the plugin's `workflows/` and `scripts/` never
+arrived. If a skill's instructions reference files it does not ship, it is a plugin.
 | `.claude/hooks/format-changed.sh` | clang-format on files changed by any Bash command — closes the gap the first hook leaves |
 
 ## Code (created as tasks complete)
