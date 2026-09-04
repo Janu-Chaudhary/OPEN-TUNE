@@ -4,6 +4,7 @@ add_library(opentune STATIC
     src/Version.cpp
     src/ScaleQuantizer.cpp
     src/AutocorrelationDetector.cpp
+    src/YinDetector.cpp
     src/ResampleCorrector.cpp
     src/SignalsmithCorrector.cpp
     src/Engine.cpp
