@@ -216,13 +216,36 @@ That list is the agenda for Stages 1 and 2.
   periodicity at half-period (measured r(P/2) = 0.20 for a removed fundamental, 0.59 for
   H2-dominant). Only an even-harmonics-only signal reaches r(P/2) = 1.0, and that waveform
   genuinely has the shorter period. 0003 and `docs/lessons.md` corrected.
-- [ ] **T1.3** — `YinDetector`: difference function
-- [ ] **T1.4** — YIN: cumulative mean normalised difference (this is the step that kills octave errors)
-- [ ] **T1.5** — YIN: absolute threshold and best-candidate selection
-- [ ] **T1.6** — YIN: parabolic interpolation for sub-sample precision (gets us from ±20 to ±5 cents)
-- [ ] **T1.7** — Voiced/unvoiced decision from the aperiodicity measure (AC6)
+- [x] **T1.3** — `YinDetector`: difference function
+- [x] **T1.4** — YIN: cumulative mean normalised difference. **This description was wrong** and
+  the implementer disproved it: the running mean plateaus after one period, so P and 2P are
+  divided by the same value (1490.69 for a 300 Hz sine) and tie exactly. CMND kills the
+  too-*high* family and puts candidates on a common scale so a fixed threshold is possible;
+  **T1.5 breaks the octave tie.** See `docs/decisions/0007`
+- [x] **T1.5** — YIN: absolute threshold and best-candidate selection — *this is the step that actually resolves P vs 2P*
+- [x] **T1.6** — YIN: parabolic interpolation for sub-sample precision. Its RED state was the natural one: without interpolation 11/27 frequencies fall outside ±5 cents, worst +17.40
+- [x] **T1.7** — Voiced/unvoiced decision from the aperiodicity measure (AC6). Silence
+  aperiodicity 1.0, white noise 0.907–0.929 across 5 seeds, clean sine <0.01; threshold 0.2,
+  provisional pending T1.8. A quiet-sine test proves confidence is not a disguised loudness meter
 - [ ] **T1.8** — Verify AC1, AC2, AC7 against a labelled vocal set
-- [ ] **T1.9** — Benchmark: confirm cost fits the per-block budget
+- [x] **T1.9** — Benchmark: confirm cost fits the per-block budget.
+  **Done 2026-09-04, controller-measured in a Release build** (a Debug build reports 12.7 ms and
+  would have failed a check that actually passes). YIN's cost is **constant per call**, ~1.24 ms,
+  because the analysis runs over a fixed 1478-sample window with 741 lags regardless of how many
+  new samples arrived. So the share of budget scales inversely with block size:
+
+  | Block | Budget | YIN | % of budget |
+  |---|---|---|---|
+  | 64 | 1.33 ms | 1.262 ms | **94.6%** |
+  | 128 | 2.67 ms | 1.272 ms | 47.7% |
+  | 256 | 5.33 ms | 1.236 ms | 23.2% |
+  | 512 | 10.67 ms | 1.234 ms | 11.6% |
+
+  **At the nominal 256-sample block it fits comfortably. At 64 it does not leave room for a
+  corrector.** This bears directly on AC4 and Q7: chasing 20 ms round-trip pushes toward smaller
+  host buffers, which is exactly where this cost becomes prohibitive. The lever is decimating the
+  analysis rate — run YIN every Nth block and hold the estimate between — not shrinking the
+  window, which is already only 2.16 periods at 65 Hz.
 
 ## Stage 2 — Correct pitch properly
 *Goal: meet AC3 and pass the listening checklist. The big quality jump.*
@@ -386,6 +409,22 @@ performers, not this user.
   repeated zeros *and* contains a loud sample, so a peak test still flagged it. Verified on
   three cases: clean corrected audio 0 flags (was 7), a synthetic D5 staircase still 50%
   flagged with pitch correctly withheld, and pure silence 0% voiced with no alarm.
+
+- [ ] **D8 — `analyze.py` is killed by the OOM killer on files longer than a few seconds.**
+  An 89-second WAV exits 137. It was only ever exercised on short synthetic clips, but the
+  owner's real takes are 41–96 seconds, which is the normal case for actual material. Needs
+  chunked/streamed analysis rather than whole-file arrays. Until fixed, analysis is limited to
+  short excerpts, which is a real constraint on measuring AC2 over a full take.
+
+- [ ] **D9 — `analyze.py` and any WAV reader must honour the format tag, not assume 16-bit PCM.**
+  The controller read a `audioFormat=3`, 32-bit float WAV as 16-bit int while triaging the
+  owner's recordings. That reinterprets each float as two ints: it manufactures broadband noise,
+  flattens the RMS envelope, and halves the reported duration — and it produced a confident,
+  entirely wrong verdict about the audio ("looks like a dense mix, not solo vocals") that was
+  reported to the owner before being caught. `WavFile.h` handles this correctly via dr_wav; the
+  Python side and any ad-hoc reader must too. **The tell was six independent recordings all
+  reporting RMS 0.5403–0.5414 — identical to four decimal places, which is impossible for real
+  audio.** Add a format-tag assertion so this fails loudly instead of silently.
 
 *Seven further minor review findings are held in `.superpowers/sdd/tasks/progress.md`
 for the whole-branch review at the end of Stage 0.*

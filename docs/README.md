@@ -32,6 +32,7 @@ either should be, or should not exist.
 | 0004 | Clamp the pitch ratio in the Engine, not the corrector (FR15 — the detector/corrector seam) |
 | 0005 | Vendor Signalsmith Stretch and pull the real corrector into Stage 0 (resolves D5) |
 | 0006 | AC4 is reachable — latency is a configuration knob; low-pitch resolution is the real limit |
+| 0007 | What YIN's CMND actually buys — it does not break the octave tie; the threshold does |
 
 ## Guards
 
