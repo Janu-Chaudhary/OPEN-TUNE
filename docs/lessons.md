@@ -157,3 +157,17 @@ the other not. Resolution is per-question, not per-dataset.
 The near-miss worth naming: the obvious next step after "AC2 fails" was to tune the detector
 until it passed. That would have fit the detector to label noise and made the engine worse
 while the number improved.
+
+**L5 recurred inside the record that stated it (2026-09-04).** Decision 0008 established that AC2
+could not be measured because the labels were as coarse as the tolerance. The *same* record then
+read a 43% → 11% accuracy collapse across pitch velocity as a property of the detector. It was not.
+The consensus estimators are window-based too, so their own disagreement more than doubles as pitch
+moves — 6.21 to 13.42 cents median, with 44.5% of "agreed" frames internally inconsistent by more
+than AC2's whole tolerance in the fastest bin. On synthetic voices with exact labels the detector
+measures 1.49 cents at the same velocity.
+
+Having identified an instrument's resolution limit in one dimension is no protection against the
+same limit in another. The correction also arrived with a wrong mechanism attached — the proposal
+was a time-alignment error, which re-running the bins at both offsets disproved in one command.
+**Check the proposed cause, not just the proposed conclusion**; a right answer for a wrong reason
+sends the next fix to the wrong place.

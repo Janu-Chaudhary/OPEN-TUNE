@@ -236,7 +236,18 @@ That list is the agenda for Stages 1 and 2.
     confidence already separates good frames from bad (octave error 19.6% below conf 0.95,
     5.4% above). At conf ≥ 0.98 AC7 passes at 0.91% — keeping only 14.6% of frames. That
     trade-off is a listening question, not a numbers one. See `docs/decisions/0008`.
-  - **AC2 — UNMEASURED, not failed.** The reference labels are ~10 cents precise (median
+  - **AC2 — MEASURED 2026-09-04 on the synthetic set: 93.99%, fails narrowly** (needs 95%).
+    Failure is localised, not general: 100% on all 12 steady notes, all 5 meend speeds *including
+    3500 ¢/s*, both vibrato and shimmer cases, weak/missing fundamentals, telephone band, and both
+    voicing cases. What remains is 2% jitter and the two breathy cases.
+  - **AC7 — root cause found, and it is NOT the voicing threshold.** Every YIN octave error comes
+    from breathy phonation and every one is octave *down*; excluding those, 0.02%. Mechanism:
+    step 3's **fallback**, which takes the global CMND minimum when no lag clears
+    `kAbsoluteThreshold` = 0.1 — a coin flip between P, 2P and 3P by its own comment. Fallback
+    fires on 0% of frames at HNR 20 dB, 46.6% at 10 dB, **100% at 5 dB**, and the wrong answer
+    passes T1.7's voicing gate comfortably (CMND 0.126 vs a 0.2 gate). **Tightening the threshold
+    cannot fix this class.** See `docs/decisions/0008`.
+  - **AC2 against the REAL takes — still unmeasurable.** The reference labels are ~10 cents precise (median
     inter-estimator spread 8.37 ¢, p95 25.78 ¢) and disagree by more than 15 cents on 25.7% of
     "agreed" frames. AC2's bar *is* ±15 cents, so the ruler and the quantity are the same size.
     Needs synthetic voices with exact f0, or a laryngograph. **Do not tune the detector against
@@ -438,6 +449,21 @@ performers, not this user.
   Python side and any ad-hoc reader must too. **The tell was six independent recordings all
   reporting RMS 0.5403–0.5414 — identical to four decimal places, which is impossible for real
   audio.** Add a format-tag assertion so this fails loudly instead of silently.
+
+- [ ] **D10 — `YinDetector`'s threshold fallback guesses when it should abstain.** When no lag
+  clears `kAbsoluteThreshold`, it takes the global CMND minimum. Measured on synthetic breathy
+  voices, that is the sole source of YIN's octave errors — 100% of frames fall back at HNR 5 dB,
+  and the wrong answer ships as confidently voiced. Options: widen the search before giving up,
+  add a cross-frame continuity constraint, or report unvoiced rather than guess. **This is the fix
+  for AC7**; the voicing threshold is not. Source: synthetic set, T1.0.
+
+- [ ] **D11 — `score_detectors.py`'s analysis-lag offset is wrong.** It assumes 23.09 ms; the
+  optimum measured against exact synthetic labels is 29.25–30.25 ms, one constant across a tenfold
+  velocity range, and it matches the geometry — YIN sums over `buffer[0..W)` whose centre is
+  2218 − 739 = 1479 samples = 30.81 ms back, not the buffer midpoint. Correcting it rewrites
+  T1.8's real-take numbers, so it is deliberately unchanged pending that re-run. **Note it does
+  NOT explain the velocity gradient** — re-running decision 0008's bins at both offsets moves them
+  under 2 points. Source: synthetic set, T1.0.
 
 *Seven further minor review findings are held in `.superpowers/sdd/tasks/progress.md`
 for the whole-branch review at the end of Stage 0.*
