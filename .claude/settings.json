@@ -23,7 +23,10 @@
       "Bash(head *)",
       "Bash(tail *)",
       "Bash(.venv/bin/python tools/*)",
-      "Bash(.venv/bin/pip *)"
+      "Bash(.venv/bin/pip *)",
+      "Bash(./build/tools/f0-dump/opentune-f0dump *)",
+      "Bash(./build/tools/autotune-cli/opentune-cli *)",
+      "Bash(gst-launch-1.0 *)"
     ],
     "deny": [
       "Bash(gh *)",
@@ -34,10 +37,7 @@
       "Bash(git push --force*)",
       "Bash(git push -f*)",
       "Bash(git reset --hard*)",
-      "Bash(git clean -f*)",
-      "Read(**/*.wav)",
-      "Read(**/*.flac)",
-      "Read(**/*.mp3)"
+      "Bash(git clean -f*)"
     ]
   },
   "hooks": {

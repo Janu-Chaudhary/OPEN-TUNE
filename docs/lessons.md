@@ -127,3 +127,33 @@ The reasoning that produced 0003 was sound about the mechanism and wrong about t
 exactly L4's failure mode. **Predicted failure modes get reproduced before they are planned
 around.** Three of this project's records have now been corrected by someone who went and
 measured: a worked example, a seam risk, and this one.
+
+---
+
+## L5 — Check the instrument's resolution before believing the measurement
+**Found:** T1.8, by the controller, after acting on a measurement for several rounds.
+
+T1.0 reported YIN failing AC2 at 83% against a 95% bar, on real vocals, after it had measured
+0.375 cents on synthetic tones. That looked like the classic story: works in the lab, dies on
+real data. Two rounds of diagnosis went into *why*.
+
+The answer was that the number could not mean what it appeared to. The labels came from a
+2-of-3 consensus of independent estimators, and on the frames they agreed about, they disagreed
+with each other by a median 8.4 cents — and by more than 15 cents on a quarter of them. AC2's
+bar is ±15 cents. **The ruler's tick marks were as wide as the thing being measured.**
+
+**Why it was missed:** the label set reported its own precision honestly, in its manifest, and
+that number was read as a caveat rather than as a limit on what could be concluded. A stated
+limitation is not the same as an understood one.
+
+**What changed:** before a measurement is believed — especially a failing one — its resolution
+is compared against the threshold being tested. If they are within an order of magnitude, the
+measurement cannot settle the question and must be reported as unmeasured rather than failed.
+
+Note what survived this: **AC7 was still measurable from the same data**, because an octave is
+1200 cents, roughly 100× the label noise. Same labels, same frames — one criterion answerable,
+the other not. Resolution is per-question, not per-dataset.
+
+The near-miss worth naming: the obvious next step after "AC2 fails" was to tune the detector
+until it passed. That would have fit the detector to label noise and made the engine worse
+while the number improved.

@@ -227,7 +227,20 @@ That list is the agenda for Stages 1 and 2.
 - [x] **T1.7** — Voiced/unvoiced decision from the aperiodicity measure (AC6). Silence
   aperiodicity 1.0, white noise 0.907–0.929 across 5 seeds, clean sine <0.01; threshold 0.2,
   provisional pending T1.8. A quiet-sine test proves confidence is not a disguised loudness meter
-- [ ] **T1.8** — Verify AC1, AC2, AC7 against a labelled vocal set
+- [~] **T1.8** — Verify AC1, AC2, AC7 against a labelled vocal set. **Split, 2026-09-04:**
+  - **AC1 — PASSED.** YIN measures 0.002–0.375 cents across 65–1099 Hz against a ±5 cent bar
+    (controller-verified). Autocorrelation reaches −14.4 cents.
+  - **AC7 — FAILS, and is actionable.** 8.08% octave errors overall, 14.25% on take04, against
+    a <1% bar. Not caused by *meend* — errors are flat across pitch velocity and slightly worse
+    on steady notes. The lever is T1.7's voicing threshold, which is far too loose: YIN's own
+    confidence already separates good frames from bad (octave error 19.6% below conf 0.95,
+    5.4% above). At conf ≥ 0.98 AC7 passes at 0.91% — keeping only 14.6% of frames. That
+    trade-off is a listening question, not a numbers one. See `docs/decisions/0008`.
+  - **AC2 — UNMEASURED, not failed.** The reference labels are ~10 cents precise (median
+    inter-estimator spread 8.37 ¢, p95 25.78 ¢) and disagree by more than 15 cents on 25.7% of
+    "agreed" frames. AC2's bar *is* ±15 cents, so the ruler and the quantity are the same size.
+    Needs synthetic voices with exact f0, or a laryngograph. **Do not tune the detector against
+    this number** — that is fitting to label noise.
 - [x] **T1.9** — Benchmark: confirm cost fits the per-block budget.
   **Done 2026-09-04, controller-measured in a Release build** (a Debug build reports 12.7 ms and
   would have failed a check that actually passes). YIN's cost is **constant per call**, ~1.24 ms,

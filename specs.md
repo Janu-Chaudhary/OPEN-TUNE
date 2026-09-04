@@ -236,7 +236,7 @@ The engine is done when all of the following pass.
 | ID | Criterion | Threshold |
 |---|---|---|
 | AC1 | Pitch detection accuracy, synthetic sine 65–1100 Hz | within ±5 cents |
-| AC2 | Pitch detection on recorded vocal vs. hand-labelled reference | within ±15 cents, 95% of voiced frames |
+| AC2 | Pitch detection on recorded vocal vs. reference | within ±15 cents, 95% of voiced frames — see the note below |
 | AC3 | Corrected output lands on the target pitch | within ±10 cents |
 | AC4 | Round-trip latency, desktop, 256-sample blocks | ≤ 20 ms — see the note below |
 | AC5 | Dropouts during a 10-minute continuous real-time run | zero |
@@ -244,6 +244,14 @@ The engine is done when all of the following pass.
 | AC7 | Octave errors (detecting 2× or ½× true pitch) | < 1% of voiced frames |
 | AC8 | CPU usage, one instance, mid-range Android device | < 15% of one core |
 | AC9 | Audio-thread allocations, verified under instrumentation | zero |
+
+**AC2 note (2026-09-04).** AC2 cannot be established against algorithm-derived labels. The
+T1.0 reference set's own estimators disagree with each other by a median 8.4 cents and by more
+than 15 cents on 25.7% of the frames they agree on — the instrument's resolution is the size of
+the quantity. The figure that measurement produced (83%) is **neither a pass nor a fail**;
+treat AC2 as unmeasured. Establishing it needs ground truth an order of magnitude tighter than
+the target: a laryngograph, or synthetic voices where f0 is exact by construction. AC7 is
+unaffected — an octave is 1200 cents, ~100× the label noise. See `docs/decisions/0008`.
 
 **AC4 note (2026-09-04).** Measured during T0.13/T0.14: Signalsmith's latency equals its
 configured block size, so it is a continuous knob and 20 ms *is* reachable — Stage 3 does not
