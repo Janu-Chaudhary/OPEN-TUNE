@@ -21,6 +21,7 @@ either should be, or should not exist.
 | `docs/decisions/` | Decision catalogue — reasoning, not just outcome. See its README for what earns a record |
 | `docs/listening-log.md` | What human ears said at each checkpoint. Append-only. **Owner writes these; Claude cannot hear** |
 | `docs/lessons.md` | Defects caught late or nearly missed, and the practice each one changed. Append-only |
+| `docs/assumption-log.md` | Claims asserted without evidence that proved wrong, the four patterns they fall into, and a pre-flight checklist. Read §1 before asserting a mechanism or believing a number |
 
 ### Decisions on record
 

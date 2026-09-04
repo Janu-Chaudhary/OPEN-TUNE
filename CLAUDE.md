@@ -51,6 +51,9 @@ Do not read the whole repo. One task per session; `/clear` after each commit.
 4. Show the diff and stop for review before committing.
 5. On approval: commit with a conventional message, tick the task in `tasks.md`.
 
+**Before asserting a mechanism or believing a number, read `docs/assumption-log.md` §1.**
+Nineteen claims in this project have been wrong; four patterns cover all of them.
+
 Three rules bought by real defects (incidents in `docs/lessons.md`):
 - A worked example in `tasks.md` is fallible — verify its arithmetic, escalate, don't work around it.
 - Test a declared range **at both endpoints**. The dangerous DSP bug is the plausible answer, not the crash.
